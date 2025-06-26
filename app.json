@@ -3,6 +3,7 @@
     "name": "TalkMemory",
     "slug": "TalkMemory",
     "version": "1.0.0",
+    "description": "TalkMemory: 英語学習を写真と思い出から学べるアプリ",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "talkmemory",
@@ -20,6 +21,7 @@
     },
     "web": {
       "bundler": "metro",
+      "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -32,9 +34,6 @@
           "backgroundColor": "#ffffff"
         }
       ]
-    ],
-    "experiments": {
-      "typedRoutes": true
-    }
+    ]
   }
 }
