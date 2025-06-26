@@ -1,17 +1,30 @@
 // HistoryScreen.js
-import React from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
+import {
+  FlatList,
+  Image,
+  Platform,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 const dummyData = [
   {
     id: '1',
-    image: 'https://placekitten.com/200/200',
+    image: 'https://placekitten.com/300/300',
     text: 'I felt relaxed at the beach',
   },
   {
     id: '2',
-    image: 'https://placekitten.com/200/201',
+    image: 'https://placekitten.com/300/301',
     text: 'That day was really exciting!',
+  },
+  {
+    id: '3',
+    image: 'https://placekitten.com/300/302',
+    text: 'I was so happy with my friends!',
   },
 ];
 
@@ -22,51 +35,72 @@ export default function HistoryScreen({ navigation }) {
       onPress={() => navigation.navigate('Detail', { item })}
     >
       <Image source={{ uri: item.image }} style={styles.image} />
-      <Text style={styles.text}>{item.text}</Text>
+      <Text style={styles.text} numberOfLines={2}>{item.text}</Text>
     </TouchableOpacity>
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.headerRow}>
+        <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>
+          MemoryTalk
+        </Text>
+      </View>
       <Text style={styles.title}>学習履歴</Text>
       <FlatList
         data={dummyData}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        numColumns={3}
+        contentContainerStyle={styles.listContainer}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
-    padding: 20,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingHorizontal: 16,
+    backgroundColor: '#F1F5F9',
   },
-  title: {
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  logo: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#0EA5E9',
-    marginBottom: 20,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#475569',
+    marginBottom: 16,
+  },
+  listContainer: {
+    paddingBottom: 40,
   },
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E2E8F0',
-    padding: 12,
+    flex: 1 / 3,
+    margin: 4,
+    backgroundColor: '#fff',
     borderRadius: 10,
-    marginBottom: 12,
+    overflow: 'hidden',
+    elevation: 2,
+    alignItems: 'center',
   },
   image: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    marginRight: 12,
+    width: '100%',
+    aspectRatio: 1,
   },
   text: {
-    fontSize: 16,
+    padding: 6,
+    fontSize: 14,
     color: '#334155',
+    textAlign: 'center',
   },
 });
