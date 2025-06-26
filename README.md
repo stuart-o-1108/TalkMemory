@@ -1,50 +1,101 @@
-# Welcome to your Expo app 👋
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
-## Get started
+## 📱 アプリ概要
 
-1. Install dependencies
+### タイトル案（例）
 
-   ```bash
-   npm install
-   ```
+**「MemoryTalk（メモリートーク）」**
+**思い出 × 英語 × AIエージェント添削＆共感**
 
-2. Start the app
+### コンセプト
 
-   ```bash
-   npx expo start
-   ```
+> **スマホの思い出写真を使って、自分の感情を英語で表現。AIが添削し、気持ちまで推測してサポートしてくれる共感型英語学習アプリ。**
 
-In the output, you'll find options to open the app in a
+### 体験イメージ（1画面完結UI）
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+* 上部にユーザー選択の写真
+* 写真の下に：「このときの気持ちを英語で伝えてみよう！」
+* 入力欄（テキスト）
+* 「確認」ボタン
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+  * AIが：
 
-## Get a fresh project
+    * ✅ 添削コメント（良い点＋言い換え例）
+    * ✅ フォローアップ提案：「こんな気持ちもあったんじゃない？」
+    * ユーザーが「はい」なら追加表現を提示
+* 表現すべてをその写真と紐づけて保存
 
-When you're ready, run:
+---
 
-```bash
-npm run reset-project
+## 🧩 実装したい最低限の機能（MVP）
+
+| 機能               | 説明                   | 備考                    |
+| ---------------- | -------------------- | --------------------- |
+| 1. 写真選択・表示       | カメラロールから1枚           | `expo-image-picker`使用 |
+| 2. 感情入力欄         | 英語で自由に表現             | TextInput             |
+| 3. GPT添削・アドバイス表示 | 「すごくいい！でも〜の方が自然だよ」など | 英語コーチエージェント           |
+| 4. フォローアップ提案     | 「もしかして〇〇って言いたかった？」   | 推論型エージェント             |
+| 5. 「はい」応答処理      | ユーザーがYESで追加表現提示      | UIはボタン想定              |
+| 6. データ保存         | 写真＋英語表現（複数）＋日時       | Supabaseで保存           |
+| 7. 保存履歴の表示       | 過去の学習内容を振り返り可能       | 任意／シンプルでOK            |
+
+---
+
+## 🔧 技術仕様
+
+| 分類      | 使用技術・ツール                             |
+| ------- | ------------------------------------ |
+| フロント    | React Native（Expo）＋ TypeScript       |
+| UIライブラリ | Expo components / カスタム               |
+| 画像取得    | `expo-image-picker`                  |
+| 英語添削・推論 | OpenAI GPT-4o API                    |
+| 状態管理    | React Hooks（`useState`, `useEffect`） |
+| データ保存   | Supabase（PostgreSQL + Storage）       |
+| APIキー管理 | `.env`で管理（後にCloud Function移行可）       |
+| バージョン管理 | Git + GitHub                         |
+| テスト     | 必須ではないがロジック部分のみ簡易テスト可能（`vitest`など）   |
+
+---
+
+## 🤖 AIへの指示ルール（Prompt設計＋開発コーディング規約）
+
+### ✏️ GPTへのPrompt設計（2種）
+
+#### ① 英語コーチ（添削＋自然な言い換え）
+
+```text
+あなたはフレンドリーな英語コーチです。
+以下の英文を見て、添削と優しいアドバイスを返してください。
+
+・そのまま使えるなら「完璧！」と返す。
+・直したほうが良い場合は、添削後の文＋理由を説明。
+・できれば自然な言い換え例も1つください。
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+#### ② フォローアップ提案エージェント（推論的）
 
-## Learn more
+```text
+ユーザーはこの英文で何か感情を伝えようとしています。
+その裏に隠れている可能性のある気持ちや状況を想像し、
+「もしかして、こんな気持ちもあったのでは？」という形で1つだけ提案してください。
+YESと言われたら、それを表現する英文を添えてください。
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+---
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 🛠️ 命名規則（TypeScript基準）
 
-## Join the community
+| 対象       | 命名規則                                         |
+| -------- | -------------------------------------------- |
+| 変数名      | `camelCase`（例：`userInput`, `adviceText`）     |
+| 関数名      | `camelCase`（例：`handleSubmit`, `fetchAdvice`） |
+| コンポーネント名 | `PascalCase`（例：`PhotoPreview`, `AdviceCard`） |
+| ファイル名    | `kebab-case.tsx`（例：`photo-preview.tsx`）      |
 
-Join our community of developers creating universal apps.
+---
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### 💬 コメント・テスト方針
+
+* GPTプロンプトには**意図説明コメント必須**
+* 添削ロジックや保存処理など**副作用のある処理には1行説明**
+* テストコードは時間があれば`adviceFetch()`のレスポンス整形部分に簡易テストを
