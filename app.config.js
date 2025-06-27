@@ -2,9 +2,6 @@ export default {
   expo: {
     name: "TalkMemory",
     slug: "TalkMemory",
-    extra:{
-      GEMINI_API_KEY : AIzaSyB4jli7rRKgutghSDhUtvXNN6_xZk_I9_s
-    },
     version: "1.0.0",
     description: "TalkMemory: 英語学習を写真と思い出から学べるアプリ",
     orientation: "portrait",

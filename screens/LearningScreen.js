@@ -1,177 +1,587 @@
-// LearningScreen.js
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import * as MediaLibrary from 'expo-media-library';
-import { useEffect, useState } from 'react';
+import Constants from 'expo-constants';
 import {
   Animated,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StatusBar,
+  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
+  Image,
 } from 'react-native';
 
 export default function LearningScreen() {
-  const [photoUri, setPhotoUri] = useState(null);
+  const getRandomPhotoUrl = () => {
+    const id = Math.floor(Math.random() * 1000) + 1;
+    return `https://picsum.photos/seed/${id}/400/400`;
+  };
+
+  const [assets, setAssets] = useState([]);
+  const [image, setImage] = useState(null);
+  const [imageDate, setImageDate] = useState('');
   const [input, setInput] = useState('');
-  const [fadeAnim] = useState(new Animated.Value(0));
+  const [feedback, setFeedback] = useState(null);
   const [step, setStep] = useState(1);
-  const [feedback, setFeedback] = useState('');
-  const [date, setDate] = useState('');
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  const [sessionProgress, setSessionProgress] = useState({ current: 1, total: 5 });
+  const [isCorrect, setIsCorrect] = useState(null);
+  const scaleAnim = useState(new Animated.Value(1))[0];
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  const navigation = useNavigation();
+
+  const GEMINI_API_KEY = Constants?.expoConfig?.extra?.GEMINI_API_KEY ||
+    'AIzaSyB4jli7rRKgutghSDhUtvXNN6_xZk_I9_s';
+
+  const fetchGeminiFeedback = async (text) => {
+    const url =
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // Gemini に JSON 形式で返信させる
+          contents: [
+            {
+              parts: [
+                {
+                  text: `次の英文のフィードバックを日本語1文でください。もしより良い表現があれば別の1文で提案してください。結果はJSONで {\"feedback\":\"...\",\"suggestion\":\"...\"} の形式で、suggestionが無い場合は空文字で返してください。英文: ${text}`,
+                },
+              ],
+            },
+          ],
+        }),
+      });
+      const json = await res.json();
+      const raw = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = { feedback: raw.trim(), suggestion: '' };
+      }
+      return {
+        message: parsed.feedback || '',
+        suggestion: parsed.suggestion || '',
+        encouragement: 'この調子で続けましょう！',
+      };
+    } catch (err) {
+      console.error('Gemini error', err);
+      return {
+        message: 'エラーが発生しました',
+        suggestion: '',
+        encouragement: '',
+      };
+    }
+  };
 
   useEffect(() => {
-    loadPhoto();
+    (async () => {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') {
+        const result = await MediaLibrary.getAssetsAsync({
+          mediaType: 'photo',
+          first: 1000,
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        });
+        if (result.assets.length > 0) {
+          setAssets(result.assets);
+          const initial = result.assets[Math.floor(Math.random() * result.assets.length)];
+          const info = await MediaLibrary.getAssetInfoAsync(initial.id);
+          const uri = info.localUri || initial.uri;
+          setImage(uri);
+          setImageDate(new Date(initial.creationTime).toLocaleDateString('ja-JP'));
+        } else {
+          const url = getRandomPhotoUrl();
+          setImage(url);
+          setImageDate(new Date().toLocaleDateString('ja-JP'));
+        }
+      } else {
+        const url = getRandomPhotoUrl();
+        setImage(url);
+        setImageDate(new Date().toLocaleDateString('ja-JP'));
+      }
+    })();
   }, []);
 
-  const loadPhoto = async () => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') return;
+  useEffect(() => {
+    if (step === 1) {
+      setIsAnimating(true);
+      Animated.sequence([
+        Animated.timing(scaleAnim, { toValue: 0.95, duration: 100, useNativeDriver: true }),
+        Animated.timing(scaleAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ]).start(() => setIsAnimating(false));
+    }
+  }, [step, scaleAnim]);
 
-    const assets = await MediaLibrary.getAssetsAsync({
-      mediaType: 'photo',
-      first: 1000,
-      sortBy: ['creationTime'],
+  const handleNextStep = async () => {
+    if (!input.trim()) return;
+
+    const result = await fetchGeminiFeedback(input);
+    setIsCorrect(true);
+    setFeedback(result);
+    setStep(3);
+  };
+
+  const flipToNextAsset = async (asset) => {
+    Animated.timing(flipAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start(async () => {
+      const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+      const uri = info.localUri || asset.uri;
+      setImage(uri);
+      setImageDate(new Date(asset.creationTime).toLocaleDateString('ja-JP'));
+      flipAnim.setValue(0);
     });
-
-    if (assets.assets.length > 0) {
-      const random = assets.assets[Math.floor(Math.random() * assets.assets.length)];
-      const info = await MediaLibrary.getAssetInfoAsync(random.id);
-      const uri = info.localUri || random.uri;
-      setPhotoUri(uri);
-
-      const d = new Date(random.creationTime);
-      setDate(`${d.getFullYear()}/${('0'+(d.getMonth()+1)).slice(-2)}/${('0'+d.getDate()).slice(-2)}`);
-
-      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-    }
   };
 
-  const handleNext = () => {
-    if (step === 1) setStep(2);
-    else if (step === 2) {
-      setFeedback(
-        `「${input}」は良い表現です！別の言い方として "I'm feeling thrilled" も使えます。`
-      );
-      setStep(3);
+  const flipToNextUrl = (url) => {
+    Animated.timing(flipAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start(() => {
+      setImage(url);
+      setImageDate(new Date().toLocaleDateString('ja-JP'));
+      flipAnim.setValue(0);
+    });
+  };
+
+  const getNextPhoto = () => {
+    if (assets.length > 0) {
+      const asset = assets[Math.floor(Math.random() * assets.length)];
+      flipToNextAsset(asset);
     } else {
-      // reset
-      setStep(1);
-      setInput('');
-      setFeedback('');
-      fadeAnim.setValue(0);
-      loadPhoto();
+      const url = getRandomPhotoUrl();
+      flipToNextUrl(url);
     }
+
+    setInput('');
+    setFeedback(null);
+    setStep(1);
+    setIsCorrect(null);
+    setShowHint(false);
+    setSessionProgress((prev) => (
+      prev.current < prev.total ? { ...prev, current: prev.current + 1 } : prev
+    ));
   };
+
+  const progressPercentage = (sessionProgress.current / sessionProgress.total) * 100;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS==='ios'?'padding':'height'}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <StatusBar barStyle="dark-content" />
-        <View style={styles.wrapper}>
-          <Text style={styles.logo}>MemoryTalk</Text>
-          {photoUri && (
-            <>
-              <Animated.Image
-                source={{ uri: photoUri }}
-                style={[styles.image, { opacity: fadeAnim }]}
-                resizeMode="contain"
-              />
-              <Text style={styles.date}>📅 {date}</Text>
-            </>
+    <SafeAreaView style={{ flex: 1 }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.container}>
+        {/* Header */}
+        <View style={styles.headerWrapper}>
+          <Text style={styles.title} onPress={() => navigation.navigate('Home')}>
+            MemoryTalk
+          </Text>
+          <View style={styles.headerRight}>
+            <Text style={styles.sub}>{sessionProgress.current} / {sessionProgress.total}</Text>
+          </View>
+        </View>
+
+        {/* progress bar */}
+        <View style={styles.progressBarOuter}>
+          <View style={[styles.progressBarInner, { width: `${progressPercentage}%` }]} />
+        </View>
+
+        <View style={styles.body}>
+          {/* Photo Section */}
+          {image ? (
+            <View style={{ marginBottom: 24 }}>
+              <View style={{ alignItems: 'center', marginBottom: 8 }}>
+                <Text style={styles.date}>📅 {imageDate}</Text>
+              </View>
+              <Animated.View
+                style={[
+                  styles.imageWrap,
+                  {
+                    transform: [
+                      { scale: scaleAnim },
+                      {
+                        rotateY: flipAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['0deg', '180deg'],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Image source={{ uri: image }} style={styles.image} resizeMode="cover" />
+                {step === 1 && <View style={styles.overlay} />}
+              </Animated.View>
+            </View>
+          ) : null}
+
+          {/* Step 1 */}
+          {step === 1 && (
+            <View style={styles.stepBox}>
+              <Text style={{ fontSize: 28, marginBottom: 12 }}>🤔</Text>
+              <Text style={styles.stepTitle}>この写真の瞬間を思い出してください</Text>
+              <Text style={styles.stepText}>その時の気持ちや状況を英語で表現してみましょう</Text>
+              <TouchableOpacity style={styles.primaryBtn} onPress={() => setStep(2)}>
+                <Text style={styles.primaryBtnText}>英語で表現してみる 🚀</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
-          {step === 1 && <Text style={styles.prompt}>英語で気持ちを言葉にしてみよう</Text>}
+          {/* Step 2 */}
           {step === 2 && (
-            <TextInput
-              style={styles.input}
-              placeholder="I'm feeling excited..."
-              value={input}
-              onChangeText={setInput}
-              multiline
-            />
+            <View style={styles.stepBox}>
+              <View style={styles.inputHeader}>
+                <Text style={styles.inputHeaderText}>💭 気持ちや出来事を英語で表現しよう</Text>
+                {/*
+                <TouchableOpacity onPress={() => setShowHint(!showHint)}>
+                  <Text style={styles.hintBtn}>💡 ヒント</Text>
+                </TouchableOpacity>
+                */}
+              </View>
+              {/*
+              {showHint && (
+                <View style={styles.hintBox}>
+                  <Text style={styles.hintText}>例: "I felt so happy when..." / "This moment was..." / "I remember feeling..."</Text>
+                </View>
+              )}
+              */}
+              <TextInput
+                style={styles.textInput}
+                placeholder="I felt excited when..."
+                value={input}
+                onChangeText={setInput}
+                multiline
+              />
+              <View style={styles.inputFooter}>
+                <Text style={styles.charCount}>文字数: {input.length}</Text>
+                <TouchableOpacity
+                  onPress={handleNextStep}
+                  disabled={!input.trim()}
+                  style={[
+                    styles.confirmBtn,
+                    !input.trim() && { backgroundColor: '#e5e7eb' },
+                  ]}
+                >
+                  <Text style={[styles.confirmBtnText, !input.trim() && { color: '#9ca3af' }]}>確認する ✓</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           )}
-          {step === 3 && <View style={styles.feedbackBox}><Text style={styles.feedback}>{feedback}</Text></View>}
 
-          <TouchableOpacity style={styles.button} onPress={handleNext}>
-            <Text style={styles.buttonText}>
-              {step === 1 ? '入力する' : step === 2 ? '確認する' : '次の写真へ'}
-            </Text>
-          </TouchableOpacity>
+          {/* Step 3 */}
+          {step === 3 && feedback && (
+            <View style={styles.feedbackContainer}>
+              <View style={[styles.feedbackBox, isCorrect ? { borderLeftColor: '#4ade80' } : { borderLeftColor: '#fb923c' }]}>
+                <View style={styles.feedbackHeader}>
+                  <Text style={{ fontSize: 24, marginRight: 8 }}>{isCorrect ? '🎉' : '💪'}</Text>
+                  <Text style={styles.feedbackTitle}>{isCorrect ? 'Great Job!' : 'Good Try!'}</Text>
+                </View>
+                <View style={{ gap: 12 }}>
+                  <View style={styles.yourExpressionBox}>
+                    <Text style={styles.yourExpressionLabel}>✨ あなたの表現</Text>
+                    <Text style={styles.yourExpressionText}>"{input}"</Text>
+                  </View>
+                  <View style={styles.feedbackMessageBox}>
+                    <Text style={styles.feedbackMessageLabel}>💡 フィードバック</Text>
+                    <Text style={styles.feedbackMessageText}>{feedback.message}</Text>
+                  </View>
+                  {feedback.suggestion ? (
+                    <View style={styles.suggestionBox}>
+                      <Text style={styles.suggestionLabel}>🚀 さらに上達するには</Text>
+                      <Text style={styles.suggestionText}>{feedback.suggestion}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.encourage}>{feedback.encouragement}</Text>
+                <View style={styles.feedbackButtons}>
+                  {sessionProgress.current >= sessionProgress.total ? (
+                    <TouchableOpacity
+                      style={styles.nextPhotoBtn}
+                      onPress={() => navigation.navigate('Home')}
+                    >
+                      <Text style={styles.nextPhotoText}>ホームに戻る 🏠</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={styles.nextPhotoBtn} onPress={getNextPhoto}>
+                      <Text style={styles.nextPhotoText}>次の写真へ 📸</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={styles.reviewBtn}>
+                    <Text style={styles.reviewText}>復習する 📚</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flexGrow: 1, justifyContent: 'flex-start' },
-  wrapper: {
+  container: {
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingHorizontal: 24,
-    backgroundColor: '#F9F9F9',
+    backgroundColor: '#f0f4ff',
+    flexGrow: 1,
+  },
+  headerWrapper: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    alignSelf: 'flex-start',
+  },
+  sub: {
+    fontSize: 12,
+    color: '#475569',
+  },
+  linkText: {
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  progressBarOuter: {
+    height: 8,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  progressBarInner: {
+    height: 8,
+    backgroundColor: '#6366f1',
+  },
+  body: {
     flex: 1,
   },
-  logo: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#00A4FF',
-    alignSelf: 'flex-start',
-    marginBottom: 16,
+  date: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    color: '#475569',
+    fontSize: 16,
+  },
+  imageWrap: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 24,
   },
   image: {
     width: '100%',
     aspectRatio: 1,
-    borderRadius: 12,
-    marginBottom: 10,
+    borderRadius: 24,
   },
-  date: {
-    fontSize: 14,
-    color: '#64748B',
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 24,
+  },
+  stepBox: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 16,
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  stepTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  stepText: {
+    color: '#475569',
+    textAlign: 'center',
     marginBottom: 16,
-    alignSelf: 'flex-start',
   },
-  prompt: {
-    fontSize: 16,
-    color: '#333',
-    marginBottom: 12,
-    alignSelf: 'flex-start',
+  primaryBtn: {
+    backgroundColor: '#4f46e5',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 16,
   },
-  input: {
+  primaryBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  inputHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
     width: '100%',
-    minHeight: 60,
+  },
+  inputHeaderText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  hintBtn: {
+    color: '#2563eb',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  hintBox: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#bfdbfe',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFF',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 12,
-    marginBottom: 16,
+    marginBottom: 8,
+    width: '100%',
+  },
+  hintText: {
+    color: '#1e40af',
+    fontSize: 12,
+  },
+  textInput: {
+    width: '100%',
+    minHeight: 80,
+    borderColor: '#cbd5e1',
+    borderWidth: 2,
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: '#fff',
     textAlignVertical: 'top',
   },
-  feedbackBox: {
+  inputFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
     width: '100%',
-    backgroundColor: '#E0F7FF',
-    padding: 14,
-    borderRadius: 8,
-    marginBottom: 16,
   },
-  feedback: {
-    color: '#0077AA',
-    fontSize: 16,
+  charCount: {
+    fontSize: 12,
+    color: '#6b7280',
   },
-  button: {
-    backgroundColor: '#00A4FF',
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 8,
+  confirmBtn: {
+    backgroundColor: '#10b981',
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  confirmBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  feedbackContainer: {
     marginBottom: 24,
   },
-  buttonText: {
-    color: '#FFF',
+  feedbackBox: {
+    backgroundColor: '#fff',
+    padding: 20,
+    borderRadius: 16,
+    borderLeftWidth: 4,
+  },
+  feedbackHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  feedbackTitle: {
+    fontSize: 20,
     fontWeight: 'bold',
-    fontSize: 16,
+    color: '#1e293b',
+  },
+  yourExpressionBox: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#bbf7d0',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  yourExpressionLabel: {
+    color: '#166534',
+    fontWeight: 'bold',
+  },
+  yourExpressionText: {
+    color: '#166534',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  feedbackMessageBox: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#bfdbfe',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  feedbackMessageLabel: {
+    color: '#1e40af',
+    fontWeight: 'bold',
+  },
+  feedbackMessageText: {
+    color: '#1e3a8a',
+    marginTop: 4,
+  },
+  suggestionBox: {
+    backgroundColor: '#ede9fe',
+    borderColor: '#ddd6fe',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  suggestionLabel: {
+    color: '#6b21a8',
+    fontWeight: 'bold',
+  },
+  suggestionText: {
+    color: '#581c87',
+    marginTop: 4,
+  },
+  encourage: {
+    textAlign: 'center',
+    color: '#334155',
+    marginVertical: 16,
+  },
+  feedbackButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  nextPhotoBtn: {
+    flex: 1,
+    backgroundColor: '#6366f1',
+    paddingVertical: 12,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  nextPhotoText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  reviewBtn: {
+    flex: 1,
+    backgroundColor: '#10b981',
+    paddingVertical: 12,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  reviewText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
 });
