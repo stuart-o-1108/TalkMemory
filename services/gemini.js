@@ -7,6 +7,7 @@ const GEMINI_API_KEY =
   Constants.manifest?.extra?.GEMINI_API_KEY ||
   process.env.GEMINI_API_KEY;
 
+// API バージョン v1 で Gemeni-Pro モデルを呼び出す
 const ENDPOINT =
   'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent';
 
@@ -31,7 +32,12 @@ async function callGemini(prompt) {
 // 英語コーチエージェントにフィードバックを依頼
 export async function getEnglishFeedback(text) {
   const raw = await callGemini(
-    `次の英文のフィードバックを日本語1文でください。もしより良い表現があれば別の1文で提案してください。結果はJSONで {"feedback":"...","suggestion":"..."} の形式で返してください。英文: ${text}`
+    'あなたはフレンドリーな英語コーチです。以下の英文を見て、日本語で添削と優しいアドバイスを返してください。\n\n' +
+      '・そのまま使えるなら「完璧！」と返す。\n' +
+      '・直したほうが良い場合は、添削後の文＋理由を説明。\n' +
+      '・できれば自然な言い換え例も1つください。\n\n' +
+      '次のJSON形式だけで答えてください。{"feedback":"...","suggestion":"..."}\n' +
+      `英文: ${text}`,
   );
   if (!raw) return { message: '', suggestion: '', encouragement: '' };
 
@@ -53,10 +59,14 @@ export async function getEnglishFeedback(text) {
   };
 }
 
-// フォローアップ提案エージェントに推測を依頼
+
+// 共感型エージェントに「もしかして...？」を尋ねる
 export async function getFollowUp(text) {
   const raw = await callGemini(
-    `ユーザーはこの英文で何か感情を伝えようとしています。その裏に隠れている可能性のある気持ちや状況を想像し、「もしかして、こんな気持ちもあったのでは？」という形で1つだけ提案してください。英文: ${text}`
+    // ユーザーの英文から推測される感情を短い日本語で返答させる
+    `ユーザーの英文から想像できる別の感情や状況があれば、` +
+      `「もしかして...？」の形で1文だけ日本語で提案してください。` +
+      `英文: ${text}`,
   );
-  return raw?.trim() || '';
+  return raw?.replace(/```/g, '').trim() || '';
 }
