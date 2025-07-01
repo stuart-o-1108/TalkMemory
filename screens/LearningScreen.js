@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import * as MediaLibrary from 'expo-media-library';
-import { getEnglishFeedback, getFollowUp } from '../services/gemini';
+import Constants from 'expo-constants';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -32,12 +32,64 @@ export default function LearningScreen() {
   const [showHint, setShowHint] = useState(false);
   const [sessionProgress, setSessionProgress] = useState({ current: 1, total: 5 });
   const [isCorrect, setIsCorrect] = useState(null);
-  const MIN_INPUT_LENGTH = 10;
   const scaleAnim = useState(new Animated.Value(1))[0];
   const flipAnim = useRef(new Animated.Value(0)).current;
   const navigation = useNavigation();
 
   const GEMINI_API_KEY = Constants?.expoConfig?.extra?.GEMINI_API_KEY;
+
+  const fetchGeminiFeedback = async (text) => {
+    const url =
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // Gemini に JSON 形式で返信させる
+          contents: [
+            {
+              parts: [
+                {
+                  text: `次の英文のフィードバックを日本語1文でください。もしより良い表現があれば別の1文で提案してください。結果はJSONで {\\\"feedback\\\":\\\"...\\\",\\\"suggestion\\\":\\\"...\\\"} の形式で、suggestionが無い場合は空文字で返してください。英文: ${text}`,
+                },
+              ],
+            },
+          ],
+        }),
+      });
+      const json = await res.json();
+
+       if (json.error) {
+      console.error('Gemini API error:', json.error);
+      return {
+        message: `Gemini API エラー: ${json.error.message || '不明なエラー'}`,
+        suggestion: '',
+        encouragement: '',
+      };
+      }
+
+      const raw = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = { feedback: raw.trim(), suggestion: '' };
+      }
+      return {
+        message: parsed.feedback || '',
+        suggestion: parsed.suggestion || '',
+        encouragement: 'この調子で続けましょう！',
+      };
+    } catch (err) {
+      console.error('Gemini error', err);
+      return {
+        message: 'ネットワークエラーやGemini APIエラーです',
+        suggestion: '',
+        encouragement: '',
+      };
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -79,34 +131,24 @@ export default function LearningScreen() {
   }, [step, scaleAnim]);
 
   const handleNextStep = async () => {
-    if (input.trim().length < MIN_INPUT_LENGTH) return;
+    if (!input.trim()) return;
 
-    const result = await getEnglishFeedback(input);
-    const follow = await getFollowUp(input);
-
-    if (!result.message) {
-      setIsCorrect(false);
-      setFeedback({
-        message: 'もう少し具体的に表現してみてください！',
-        suggestion: '',
-        encouragement: '',
-        followUp: follow,
-      });
-    } else {
-      setIsCorrect(true);
-      setFeedback({ ...result, followUp: follow });
-    }
+    const result = await fetchGeminiFeedback(input);
+    setIsCorrect(true);
+    setFeedback(result);
     setStep(3);
   };
 
   const flipToNextAsset = async (asset) => {
-    Animated.timing(flipAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start(async () => {
-      const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-      const uri = info.localUri || asset.uri;
-      setImage(uri);
-      setImageDate(new Date(asset.creationTime).toLocaleDateString('ja-JP'));
-      flipAnim.setValue(0);
-    });
+    Animated.timing(flipAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start(
+      async () => {
+        const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+        const uri = info.localUri || asset.uri;
+        setImage(uri);
+        setImageDate(new Date(asset.creationTime).toLocaleDateString('ja-JP'));
+        flipAnim.setValue(0);
+      },
+    );
   };
 
   const flipToNextUrl = (url) => {
@@ -131,175 +173,162 @@ export default function LearningScreen() {
     setStep(1);
     setIsCorrect(null);
     setShowHint(false);
-    setSessionProgress((prev) => (
-      prev.current < prev.total ? { ...prev, current: prev.current + 1 } : prev
-    ));
+    setSessionProgress((prev) =>
+      prev.current < prev.total ? { ...prev, current: prev.current + 1 } : prev,
+    );
   };
 
   const progressPercentage = (sessionProgress.current / sessionProgress.total) * 100;
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS == 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.container}>
-        {/* Header */}
-        <View style={styles.headerWrapper}>
-          <Text style={styles.title} onPress={() => navigation.navigate('Home')}>
-            MemoryTalk
-          </Text>
-          <View style={styles.headerRight}>
-            <Text style={styles.sub}>{sessionProgress.current} / {sessionProgress.total}</Text>
+          {/* Header */}
+          <View style={styles.headerWrapper}>
+            <Text style={styles.title} onPress={() => navigation.navigate('Home')}>
+              MemoryTalk
+            </Text>
+            <View style={styles.headerRight}>
+              <Text style={styles.sub}>{sessionProgress.current} / {sessionProgress.total}</Text>
+            </View>
           </View>
-        </View>
 
-        {/* progress bar */}
-        <View style={styles.progressBarOuter}>
-          <View style={[styles.progressBarInner, { width: `${progressPercentage}%` }]} />
-        </View>
+          {/* progress bar */}
+          <View style={styles.progressBarOuter}>
+            <View style={[styles.progressBarInner, { width: `${progressPercentage}%` }]} />
+          </View>
 
-        <View style={styles.body}>
-          {/* Photo Section */}
-          {image ? (
-            <View style={{ marginBottom: 24 }}>
-              <View style={{ alignItems: 'center', marginBottom: 8 }}>
-                <Text style={styles.date}>📅 {imageDate}</Text>
-              </View>
-              <Animated.View
-                style={[
-                  styles.imageWrap,
-                  {
-                    transform: [
-                      { scale: scaleAnim },
-                      {
-                        rotateY: flipAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: ['0deg', '180deg'],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <Image source={{ uri: image }} style={styles.image} resizeMode="cover" />
-                {step === 1 && <View style={styles.overlay} />}
-              </Animated.View>
-            </View>
-          ) : null}
-
-          {/* Step 1 */}
-          {step === 1 && (
-            <View style={styles.stepBox}>
-              <Text style={{ fontSize: 28, marginBottom: 12 }}>🤔</Text>
-              <Text style={styles.stepTitle}>この写真の瞬間を思い出してください</Text>
-              <Text style={styles.stepText}>その時の気持ちや状況を英語で表現してみましょう</Text>
-              <TouchableOpacity style={styles.primaryBtn} onPress={() => setStep(2)}>
-                <Text style={styles.primaryBtnText}>英語で表現してみる 🚀</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Step 2 */}
-          {step === 2 && (
-            <View style={styles.stepBox}>
-              <View style={styles.inputHeader}>
-                <Text style={styles.inputHeaderText}>💭 気持ちや出来事を英語で表現しよう</Text>
-                {/*
-                <TouchableOpacity onPress={() => setShowHint(!showHint)}>
-                  <Text style={styles.hintBtn}>💡 ヒント</Text>
-                </TouchableOpacity>
-                */}
-              </View>
-              {/*
-              {showHint && (
-                <View style={styles.hintBox}>
-                  <Text style={styles.hintText}>例: "I felt so happy when..." / "This moment was..." / "I remember feeling..."</Text>
+          <View style={styles.body}>
+            {/* Photo Section */}
+            {image ? (
+              <View style={{ marginBottom: 24 }}>
+                <View style={{ alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={styles.date}>📅 {imageDate}</Text>
                 </View>
-              )}
-              */}
-              <TextInput
-                style={styles.textInput}
-                placeholder="I felt excited when..."
-                value={input}
-                onChangeText={setInput}
-                multiline
-              />
-              <View style={styles.inputFooter}>
-                <Text style={styles.charCount}>文字数: {input.length}</Text>
-                <TouchableOpacity
-                  onPress={handleNextStep}
-                  disabled={input.trim().length < MIN_INPUT_LENGTH}
+                <Animated.View
                   style={[
-                    styles.confirmBtn,
-                    input.trim().length < MIN_INPUT_LENGTH && { backgroundColor: '#e5e7eb' },
+                    styles.imageWrap,
+                    {
+                      transform: [
+                        { scale: scaleAnim },
+                        {
+                          rotateY: flipAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: ['0deg', '180deg'],
+                          }),
+                        },
+                      ],
+                    },
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.confirmBtnText,
-                      input.trim().length < MIN_INPUT_LENGTH && { color: '#9ca3af' },
-                    ]}
-                  >
-                    確認する ✓
-                  </Text>
+                  <Image source={{ uri: image }} style={styles.image} resizeMode="cover" />
+                  {step === 1 && <View style={styles.overlay} />}
+                </Animated.View>
+              </View>
+            ) : null}
+
+            {/* Step 1 */}
+            {step === 1 && (
+              <View style={styles.stepBox}>
+                <Text style={{ fontSize: 28, marginBottom: 12 }}>🤔</Text>
+                <Text style={styles.stepTitle}>この写真の瞬間を思い出してください</Text>
+                <Text style={styles.stepText}>その時の気持ちや状況を英語で表現してみましょう</Text>
+                <TouchableOpacity style={styles.primaryBtn} onPress={() => setStep(2)}>
+                  <Text style={styles.primaryBtnText}>英語で表現してみる 🚀</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-          )}
+            )}
 
-          {/* Step 3 */}
-          {step === 3 && feedback && (
-            <View style={styles.feedbackContainer}>
-              <View style={[styles.feedbackBox, isCorrect ? { borderLeftColor: '#4ade80' } : { borderLeftColor: '#fb923c' }]}>
-                <View style={styles.feedbackHeader}>
-                  <Text style={{ fontSize: 24, marginRight: 8 }}>{isCorrect ? '🎉' : '💪'}</Text>
-                  <Text style={styles.feedbackTitle}>{isCorrect ? 'Great Job!' : 'Good Try!'}</Text>
+            {/* Step 2 */}
+            {step === 2 && (
+              <View style={styles.stepBox}>
+                <View style={styles.inputHeader}>
+                  <Text style={styles.inputHeaderText}>💭 気持ちや出来事を英語で表現しよう</Text>
+                  {/*
+                  <TouchableOpacity onPress={() => setShowHint(!showHint)}>
+                    <Text style={styles.hintBtn}>💡 ヒント</Text>
+                  </TouchableOpacity>
+                  */}
                 </View>
-                <View style={{ gap: 12 }}>
-                  <View style={styles.yourExpressionBox}>
-                    <Text style={styles.yourExpressionLabel}>✨ あなたの表現</Text>
-                    <Text style={styles.yourExpressionText}>"{input}"</Text>
+                {/*
+                {showHint && (
+                  <View style={styles.hintBox}>
+                    <Text style={styles.hintText}>例: "I felt so happy when..." / "This moment was..." / "I remember feeling..."</Text>
                   </View>
-                  <View style={styles.feedbackMessageBox}>
-                    <Text style={styles.feedbackMessageLabel}>💡 フィードバック</Text>
-                    <Text style={styles.feedbackMessageText}>{feedback.message}</Text>
-                  </View>
-                  {feedback.suggestion ? (
-                    <View style={styles.suggestionBox}>
-                      <Text style={styles.suggestionLabel}>🚀 さらに上達するには</Text>
-                      <Text style={styles.suggestionText}>{feedback.suggestion}</Text>
-                    </View>
-                  ) : null}
-                  {feedback.followUp ? (
-                    <View style={styles.followUpBox}>
-                      <Text style={styles.followUpLabel}>🤔 もしかして…</Text>
-                      <Text style={styles.followUpText}>{feedback.followUp}</Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Text style={styles.encourage}>{feedback.encouragement}</Text>
-                <View style={styles.feedbackButtons}>
-                  {sessionProgress.current >= sessionProgress.total ? (
-                    <TouchableOpacity
-                      style={styles.nextPhotoBtn}
-                      onPress={() => navigation.navigate('Home')}
-                    >
-                      <Text style={styles.nextPhotoText}>ホームに戻る 🏠</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity style={styles.nextPhotoBtn} onPress={getNextPhoto}>
-                      <Text style={styles.nextPhotoText}>次の写真へ 📸</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity style={styles.reviewBtn}>
-                    <Text style={styles.reviewText}>復習する 📚</Text>
+                )}
+                */}
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="I felt excited when..."
+                  value={input}
+                  onChangeText={setInput}
+                  multiline
+                />
+                <View style={styles.inputFooter}>
+                  <Text style={styles.charCount}>文字数: {input.length}</Text>
+                  <TouchableOpacity
+                    onPress={handleNextStep}
+                    disabled={!input.trim()}
+                    style={[
+                      styles.confirmBtn,
+                      !input.trim() && { backgroundColor: '#e5e7eb' },
+                    ]}
+                  >
+                    <Text style={[styles.confirmBtnText, !input.trim() && { color: '#9ca3af' }]}>確認する ✓</Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            </View>
-          )}
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            )}
+
+            {/* Step 3 */}
+            {step === 3 && feedback && (
+              <View style={styles.feedbackContainer}>
+                <View style={[styles.feedbackBox, isCorrect ? { borderLeftColor: '#4ade80' } : { borderLeftColor: '#fb923c' }]}>
+                  <View style={styles.feedbackHeader}>
+                    <Text style={{ fontSize: 24, marginRight: 8 }}>{isCorrect ? '🎉' : '💪'}</Text>
+                    <Text style={styles.feedbackTitle}>{isCorrect ? 'Great Job!' : 'Good Try!'}</Text>
+                  </View>
+                  <View style={{ gap: 12 }}>
+                    <View style={styles.yourExpressionBox}>
+                      <Text style={styles.yourExpressionLabel}>✨ あなたの表現</Text>
+                      <Text style={styles.yourExpressionText}>"{input}"</Text>
+                    </View>
+                    <View style={styles.feedbackMessageBox}>
+                      <Text style={styles.feedbackMessageLabel}>💡 フィードバック</Text>
+                      <Text style={styles.feedbackMessageText}>{feedback.message}</Text>
+                    </View>
+                    {feedback.suggestion ? (
+                      <View style={styles.suggestionBox}>
+                        <Text style={styles.suggestionLabel}>🚀 さらに上達するには</Text>
+                        <Text style={styles.suggestionText}>{feedback.suggestion}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.encourage}>{feedback.encouragement}</Text>
+                  <View style={styles.feedbackButtons}>
+                    {sessionProgress.current >= sessionProgress.total ? (
+                      <TouchableOpacity
+                        style={styles.nextPhotoBtn}
+                        onPress={() => navigation.navigate('Home')}
+                      >
+                        <Text style={styles.nextPhotoText}>ホームに戻る 🏠</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity style={styles.nextPhotoBtn} onPress={getNextPhoto}>
+                        <Text style={styles.nextPhotoText}>次の写真へ 📸</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={styles.reviewBtn}>
+                      <Text style={styles.reviewText}>復習する 📚</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -532,21 +561,6 @@ const styles = StyleSheet.create({
   },
   suggestionText: {
     color: '#581c87',
-    marginTop: 4,
-  },
-  followUpBox: {
-    backgroundColor: '#fef9c3',
-    borderColor: '#fde68a',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-  },
-  followUpLabel: {
-    color: '#92400e',
-    fontWeight: 'bold',
-  },
-  followUpText: {
-    color: '#78350f',
     marginTop: 4,
   },
   encourage: {

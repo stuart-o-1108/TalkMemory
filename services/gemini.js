@@ -8,7 +8,7 @@ const GEMINI_API_KEY =
   process.env.GEMINI_API_KEY;
 
 const ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+  'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent';
 
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) {
