@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+
   TouchableOpacity,
   View,
   Image,
@@ -40,7 +41,7 @@ export default function LearningScreen() {
 
   const fetchGeminiFeedback = async (text) => {
     const url =
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`;
+      `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -51,7 +52,7 @@ export default function LearningScreen() {
             {
               parts: [
                 {
-                  text: `次の英文のフィードバックを日本語1文でください。もしより良い表現があれば別の1文で提案してください。結果はJSONで {\\\"feedback\\\":\\\"...\\\",\\\"suggestion\\\":\\\"...\\\"} の形式で、suggestionが無い場合は空文字で返してください。英文: ${text}`,
+                  text: `あなたはフレンドリーな英語コーチです。以下の英文を見て、添削と優しいアドバイスを返してください。\n\n・そのまま使えるなら「完璧！」と返す。\n・直したほうが良い場合は、添削後の文＋理由を説明。\n・できれば自然な言い換え例も1つください。\n\n次のJSON形式だけで答えてください。{\"feedback\":\"...\",\"suggestion\":\"...\"}\n英文: ${text}`,
                 },
               ],
             },
@@ -60,24 +61,29 @@ export default function LearningScreen() {
       });
       const json = await res.json();
 
-       if (json.error) {
-      console.error('Gemini API error:', json.error);
-      return {
-        message: `Gemini API エラー: ${json.error.message || '不明なエラー'}`,
-        suggestion: '',
-        encouragement: '',
-      };
+      if (json.error) {
+        return {
+          message: 'Gemini APIの設定に問題があります（管理者に連絡してください）',
+          suggestion: '',
+          encouragement: '',
+        };
       }
 
       const raw = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      // 余計な ``` や接頭辞を除去してから JSON 解析を試みる
+      const cleaned = raw
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .replace(/^feedback[:：]\s*/i, '')
+        .trim();
       let parsed;
       try {
-        parsed = JSON.parse(raw);
+        parsed = JSON.parse(cleaned);
       } catch {
-        parsed = { feedback: raw.trim(), suggestion: '' };
+        parsed = { feedback: cleaned, suggestion: '' };
       }
       return {
-        message: parsed.feedback || '',
+        message: parsed.feedback || parsed.message || '',
         suggestion: parsed.suggestion || '',
         encouragement: 'この調子で続けましょう！',
       };
