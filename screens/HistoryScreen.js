@@ -53,9 +53,7 @@ export default function HistoryScreen({ navigation }) {
 
   const [stats] = useState({
     totalSessions: 45,
-    averageScore: 87,
-    perfectScores: 12,
-    improvementRate: 15
+    averageScore: 87
   });
 
   const getEmotionEmoji = (emotion) => {
@@ -109,21 +107,12 @@ export default function HistoryScreen({ navigation }) {
             <Text style={[styles.statValue, { color: '#16A34A' }]}>{stats.averageScore}%</Text>
             <Text style={styles.statLabel}>平均スコア</Text>
           </View>
-          <View style={styles.statBox}>
-            <Text style={[styles.statValue, { color: '#7C3AED' }]}>{stats.perfectScores}</Text>
-            <Text style={styles.statLabel}>満点回数</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={[styles.statValue, { color: '#EA580C' }]}>+{stats.improvementRate}%</Text>
-            <Text style={styles.statLabel}>今月の向上</Text>
-          </View>
         </View>
 
         <View style={styles.tabsRow}>
           {[
             { key: 'recent', label: '最近', icon: '🕒' },
-            { key: 'favorites', label: 'お気に入り', icon: '⭐' },
-            { key: 'review', label: '要復習', icon: '📚' }
+            { key: 'favorites', label: 'お気に入り', icon: '⭐' }
           ].map(tab => (
             <TouchableOpacity
               key={tab.key}
@@ -180,13 +169,10 @@ export default function HistoryScreen({ navigation }) {
 
               <View style={styles.actionRow}>
                 <TouchableOpacity
-                  style={[styles.actionButton, styles.detailButton]}
+                  style={[styles.actionButton, styles.detailButton, styles.singleButton]}
                   onPress={() => navigation.navigate('Detail', { item: { image: item.photo, text: item.expressions[0]?.corrected || '' } })}
                 >
                   <Text style={styles.actionText}>詳細を見る</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionButton, styles.practiceButton]}> 
-                  <Text style={styles.actionText}>もう一度練習</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -384,6 +370,10 @@ const styles = StyleSheet.create({
   practiceButton: {
     backgroundColor: '#10B981',
     marginLeft: 8,
+  },
+  singleButton: {
+    marginLeft: 0,
+    marginRight: 0,
   },
   actionText: {
     color: '#fff',

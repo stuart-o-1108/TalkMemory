@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import * as MediaLibrary from 'expo-media-library';
-import Constants from 'expo-constants';
+import { getEnglishFeedback, getFollowUp } from '../services/gemini';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -32,55 +32,12 @@ export default function LearningScreen() {
   const [showHint, setShowHint] = useState(false);
   const [sessionProgress, setSessionProgress] = useState({ current: 1, total: 5 });
   const [isCorrect, setIsCorrect] = useState(null);
+  const MIN_INPUT_LENGTH = 10;
   const scaleAnim = useState(new Animated.Value(1))[0];
   const flipAnim = useRef(new Animated.Value(0)).current;
   const navigation = useNavigation();
 
-  const GEMINI_API_KEY = Constants?.expoConfig?.extra?.GEMINI_API_KEY ||
-    'AIzaSyB4jli7rRKgutghSDhUtvXNN6_xZk_I9_s';
-
-  const fetchGeminiFeedback = async (text) => {
-    const url =
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // Gemini に JSON 形式で返信させる
-          contents: [
-            {
-              parts: [
-                {
-                  text: `次の英文のフィードバックを日本語1文でください。もしより良い表現があれば別の1文で提案してください。結果はJSONで {\"feedback\":\"...\",\"suggestion\":\"...\"} の形式で、suggestionが無い場合は空文字で返してください。英文: ${text}`,
-                },
-              ],
-            },
-          ],
-        }),
-      });
-      const json = await res.json();
-      const raw = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-      let parsed;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = { feedback: raw.trim(), suggestion: '' };
-      }
-      return {
-        message: parsed.feedback || '',
-        suggestion: parsed.suggestion || '',
-        encouragement: 'この調子で続けましょう！',
-      };
-    } catch (err) {
-      console.error('Gemini error', err);
-      return {
-        message: 'エラーが発生しました',
-        suggestion: '',
-        encouragement: '',
-      };
-    }
-  };
+  const GEMINI_API_KEY = Constants?.expoConfig?.extra?.GEMINI_API_KEY;
 
   useEffect(() => {
     (async () => {
@@ -122,11 +79,23 @@ export default function LearningScreen() {
   }, [step, scaleAnim]);
 
   const handleNextStep = async () => {
-    if (!input.trim()) return;
+    if (input.trim().length < MIN_INPUT_LENGTH) return;
 
-    const result = await fetchGeminiFeedback(input);
-    setIsCorrect(true);
-    setFeedback(result);
+    const result = await getEnglishFeedback(input);
+    const follow = await getFollowUp(input);
+
+    if (!result.message) {
+      setIsCorrect(false);
+      setFeedback({
+        message: 'もう少し具体的に表現してみてください！',
+        suggestion: '',
+        encouragement: '',
+        followUp: follow,
+      });
+    } else {
+      setIsCorrect(true);
+      setFeedback({ ...result, followUp: follow });
+    }
     setStep(3);
   };
 
@@ -258,13 +227,20 @@ export default function LearningScreen() {
                 <Text style={styles.charCount}>文字数: {input.length}</Text>
                 <TouchableOpacity
                   onPress={handleNextStep}
-                  disabled={!input.trim()}
+                  disabled={input.trim().length < MIN_INPUT_LENGTH}
                   style={[
                     styles.confirmBtn,
-                    !input.trim() && { backgroundColor: '#e5e7eb' },
+                    input.trim().length < MIN_INPUT_LENGTH && { backgroundColor: '#e5e7eb' },
                   ]}
                 >
-                  <Text style={[styles.confirmBtnText, !input.trim() && { color: '#9ca3af' }]}>確認する ✓</Text>
+                  <Text
+                    style={[
+                      styles.confirmBtnText,
+                      input.trim().length < MIN_INPUT_LENGTH && { color: '#9ca3af' },
+                    ]}
+                  >
+                    確認する ✓
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -291,6 +267,12 @@ export default function LearningScreen() {
                     <View style={styles.suggestionBox}>
                       <Text style={styles.suggestionLabel}>🚀 さらに上達するには</Text>
                       <Text style={styles.suggestionText}>{feedback.suggestion}</Text>
+                    </View>
+                  ) : null}
+                  {feedback.followUp ? (
+                    <View style={styles.followUpBox}>
+                      <Text style={styles.followUpLabel}>🤔 もしかして…</Text>
+                      <Text style={styles.followUpText}>{feedback.followUp}</Text>
                     </View>
                   ) : null}
                 </View>
@@ -550,6 +532,21 @@ const styles = StyleSheet.create({
   },
   suggestionText: {
     color: '#581c87',
+    marginTop: 4,
+  },
+  followUpBox: {
+    backgroundColor: '#fef9c3',
+    borderColor: '#fde68a',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  followUpLabel: {
+    color: '#92400e',
+    fontWeight: 'bold',
+  },
+  followUpText: {
+    color: '#78350f',
     marginTop: 4,
   },
   encourage: {
