@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import * as MediaLibrary from 'expo-media-library';
-import { getEnglishFeedback, getFollowUp } from '../services/gemini';
+import { getEnglishFeedback } from '../services/gemini';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -81,19 +81,17 @@ export default function LearningScreen() {
     if (input.trim().length < MIN_INPUT_LENGTH) return;
 
     const result = await getEnglishFeedback(input);
-    const follow = await getFollowUp(input);
-
+    
     if (!result.message) {
       setIsCorrect(false);
       setFeedback({
         message: 'もう少し具体的に表現してみてください！',
         suggestion: '',
         encouragement: '',
-        followUp: follow,
       });
     } else {
       setIsCorrect(true);
-      setFeedback({ ...result, followUp: follow });
+      setFeedback({ ...result });
     }
     setStep(3);
   };
@@ -268,13 +266,7 @@ export default function LearningScreen() {
                       <Text style={styles.suggestionText}>{feedback.suggestion}</Text>
                     </View>
                   ) : null}
-                  {feedback.followUp ? (
-                    <View style={styles.followUpBox}>
-                      <Text style={styles.followUpLabel}>🤔 もしかして…</Text>
-                      <Text style={styles.followUpText}>{feedback.followUp}</Text>
-                    </View>
-                  ) : null}
-                </View>
+                  </View>
                 <Text style={styles.encourage}>{feedback.encouragement}</Text>
                 <View style={styles.feedbackButtons}>
                   {sessionProgress.current >= sessionProgress.total ? (
@@ -531,21 +523,6 @@ const styles = StyleSheet.create({
   },
   suggestionText: {
     color: '#581c87',
-    marginTop: 4,
-  },
-  followUpBox: {
-    backgroundColor: '#fef9c3',
-    borderColor: '#fde68a',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-  },
-  followUpLabel: {
-    color: '#92400e',
-    fontWeight: 'bold',
-  },
-  followUpText: {
-    color: '#78350f',
     marginTop: 4,
   },
   encourage: {

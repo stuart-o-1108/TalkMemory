@@ -36,6 +36,7 @@ export async function getEnglishFeedback(text) {
       '・そのまま使えるなら「完璧！」と返す。\n' +
       '・直したほうが良い場合は、添削後の文＋理由を説明。\n' +
       '・できれば自然な言い換え例も1つください。\n\n' +
+      'フィードバックとさらに上達するには、それぞれ短い文で答え、添削や提案した英文は★で囲み、★の後には改行し、理由や説明は簡潔に。否定的な表現は避けてください。\n\n' +
       '次のJSON形式だけで答えてください。{"feedback":"...","suggestion":"..."}\n' +
       `英文: ${text}`,
   );
@@ -57,16 +58,4 @@ export async function getEnglishFeedback(text) {
     suggestion: parsed.suggestion || '',
     encouragement: 'この調子で続けましょう！',
   };
-}
-
-
-// 共感型エージェントに「もしかして...？」を尋ねる
-export async function getFollowUp(text) {
-  const raw = await callGemini(
-    // ユーザーの英文から推測される感情を短い日本語で返答させる
-    `ユーザーの英文から想像できる別の感情や状況があれば、` +
-      `「もしかして...？」の形で1文だけ日本語で提案してください。` +
-      `英文: ${text}`,
-  );
-  return raw?.replace(/```/g, '').trim() || '';
 }
