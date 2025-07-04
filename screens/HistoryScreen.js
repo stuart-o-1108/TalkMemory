@@ -10,13 +10,17 @@ import {
   View,
   Platform,
 } from 'react-native';
-import { supabase } from '../lib/supabase';
+import {
+  supabase,
+  getFavorites,
+} from '../lib/supabase';
 
 export default function HistoryScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('recent');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [historyData, setHistoryData] = useState([]);
+  const [favoriteIds, setFavoriteIds] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -24,15 +28,22 @@ export default function HistoryScreen({ navigation }) {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
-      const { data, error } = await supabase
-        .from('learning_histories')
-        .select('id, learned_at, input_text, feedback_text, advice_text, image:images(id,image_url)')
-        .eq('user_id', user.id)
-        .order('learned_at', { ascending: false });
+      const [{ data, error }, favs] = await Promise.all([
+        supabase
+          .from('learning_histories')
+          .select(
+            'id, image_id, learned_at, input_text, feedback_text, advice_text, image:images(id,image_url)'
+          )
+          .eq('user_id', user.id)
+          .order('learned_at', { ascending: false }),
+        getFavorites(),
+      ]);
       if (!error && data) {
+        setFavoriteIds((favs || []).map((f) => f.image_id));
         setHistoryData(
           data.map((h) => ({
             id: h.id,
+            imageId: h.image_id,
             date: new Date(h.learned_at).toLocaleDateString('ja-JP'),
             photo: h.image?.image_url,
             expressions: [
@@ -81,19 +92,23 @@ export default function HistoryScreen({ navigation }) {
     return { backgroundColor: '#FEE2E2', color: '#991B1B' };
   };
 
-  const filteredHistory = historyData.filter(item =>
-    item.expressions.some(exp =>
-      exp.original.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      exp.corrected.toLowerCase().includes(searchQuery.toLowerCase())
+  const searchFiltered = historyData.filter((item) =>
+    item.expressions.some(
+      (exp) =>
+        exp.original.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        exp.corrected.toLowerCase().includes(searchQuery.toLowerCase())
     ) || item.date.includes(searchQuery)
+  );
+
+  const filteredHistory = searchFiltered.filter((item) =>
+    activeTab === 'favorites' ? favoriteIds.includes(item.imageId) : true
   );
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.headerRow}>
-          <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>
-MemoryTalk</Text>
+          <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>MemoryTalk</Text>
         </View>
 
         <Text style={styles.title}>学習履歴</Text>

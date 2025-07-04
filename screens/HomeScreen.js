@@ -9,7 +9,12 @@ import {
   Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { supabase } from '../lib/supabase';
+import {
+  supabase,
+  getFavorites,
+  addFavorite,
+  removeFavorite,
+} from '../lib/supabase';
 
 export default function HomeScreen({ navigation }) {
   const [userStats] = useState({
@@ -22,21 +27,26 @@ export default function HomeScreen({ navigation }) {
   });
 
   const [recentPhotos, setRecentPhotos] = useState([]);
+  const [favoriteIds, setFavoriteIds] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: imgs } = await supabase
-        .from('images')
-        .select('id, image_url, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-      const { data: histories } = await supabase
-        .from('learning_histories')
-        .select('image_id')
-        .eq('user_id', user.id);
+       const [{ data: imgs }, { data: histories }, favs] = await Promise.all([
+        supabase
+          .from('images')
+          .select('id, image_url, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase.from('learning_histories').select('image_id').eq('user_id', user.id),
+        getFavorites(),
+      ]);
 
+      const favSet = new Set((favs || []).map((f) => f.image_id));
+      setFavoriteIds(Array.from(favSet));
       const countMap = {};
       (histories || []).forEach((h) => {
         countMap[h.image_id] = (countMap[h.image_id] || 0) + 1;
@@ -48,11 +58,28 @@ export default function HomeScreen({ navigation }) {
           uri: img.image_url,
           date: new Date(img.created_at).toLocaleDateString('ja-JP'),
           expressions: countMap[img.id] || 0,
+          isFavorite: favSet.has(img.id),
         }))
       );
     };
     fetchData();
   }, []);
+
+    const toggleFavorite = async (imageId, isFav) => {
+    if (isFav) {
+      await removeFavorite(imageId);
+    } else {
+      await addFavorite(imageId);
+    }
+    setFavoriteIds((prev) =>
+      isFav ? prev.filter((id) => id !== imageId) : [...prev, imageId]
+    );
+    setRecentPhotos((prev) =>
+      prev.map((p) =>
+        p.id === imageId ? { ...p, isFavorite: !isFav } : p
+      )
+    );
+  };
 
   const progressPercentage =
     (userStats.completedThisWeek / userStats.weeklyGoal) * 100;
@@ -151,11 +178,19 @@ export default function HomeScreen({ navigation }) {
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoScroll}>
           {recentPhotos.map((photo) => (
-            <TouchableOpacity key={photo.id} style={styles.photoCard}>
+            <View key={photo.id} style={styles.photoCard}>
+              <TouchableOpacity
+                style={styles.favoriteButton}
+                onPress={() => toggleFavorite(photo.id, photo.isFavorite)}
+              >
+                <Text style={styles.favoriteIcon}>
+                  {photo.isFavorite ? '⭐' : '☆'}
+                </Text>
+              </TouchableOpacity>
               <Image source={{ uri: photo.uri }} style={styles.photoImage} />
               <Text style={styles.photoDate}>{photo.date}</Text>
               <Text style={styles.photoExp}>{photo.expressions}個の表現</Text>
-            </TouchableOpacity>
+            </View>
           ))}
         </ScrollView>
 
@@ -320,6 +355,7 @@ const styles = StyleSheet.create({
     padding: 8,
     marginRight: 12,
     width: 120,
+    position: 'relative',
     shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -333,6 +369,13 @@ const styles = StyleSheet.create({
   },
   photoDate: { fontSize: 12, color: '#64748B', marginBottom: 2 },
   photoExp: { fontSize: 12, color: '#2563EB', fontWeight: '600' },
+  favoriteButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    zIndex: 1,
+  },
+  favoriteIcon: { fontSize: 18 },  
   quickRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
