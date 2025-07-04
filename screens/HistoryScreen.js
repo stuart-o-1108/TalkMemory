@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Image,
   SafeAreaView,
@@ -10,51 +10,57 @@ import {
   View,
   Platform,
 } from 'react-native';
+import { supabase } from '../lib/supabase';
 
 export default function HistoryScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('recent');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [historyData] = useState([
-    {
-      id: 1,
-      date: '2025-06-26',
-      photo: 'https://via.placeholder.com/80x80/4ade80/ffffff?text=Photo1',
-      expressions: [
-        { original: 'I was so happy', corrected: 'I felt incredibly happy', score: 85 },
-        { original: 'This moment is great', corrected: 'This moment was amazing', score: 90 }
-      ],
-      totalScore: 87,
-      emotion: 'joy'
-    },
-    {
-      id: 2,
-      date: '2025-06-25',
-      photo: 'https://via.placeholder.com/80x80/60a5fa/ffffff?text=Photo2',
-      expressions: [
-        { original: 'I feel excited about this', corrected: 'I felt excited about this moment', score: 95 }
-      ],
-      totalScore: 95,
-      emotion: 'excitement'
-    },
-    {
-      id: 3,
-      date: '2025-06-24',
-      photo: 'https://via.placeholder.com/80x80/f472b6/ffffff?text=Photo3',
-      expressions: [
-        { original: 'It was good day', corrected: 'It was a good day', score: 75 },
-        { original: 'I enjoyed with friends', corrected: 'I enjoyed time with friends', score: 80 },
-        { original: 'Very fun experience', corrected: 'It was a very fun experience', score: 85 }
-      ],
-      totalScore: 80,
-      emotion: 'contentment'
-    }
-  ]);
+  const [historyData, setHistoryData] = useState([]);
 
-  const [stats] = useState({
-    totalSessions: 45,
-    averageScore: 87
-  });
+  useEffect(() => {
+    const fetchData = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('learning_histories')
+        .select('id, learned_at, input_text, feedback_text, advice_text, image:images(id,image_url)')
+        .eq('user_id', user.id)
+        .order('learned_at', { ascending: false });
+      if (!error && data) {
+        setHistoryData(
+          data.map((h) => ({
+            id: h.id,
+            date: new Date(h.learned_at).toLocaleDateString('ja-JP'),
+            photo: h.image?.image_url,
+            expressions: [
+              {
+                original: h.input_text,
+                corrected: h.feedback_text,
+                score: 0,
+              },
+            ],
+            totalScore: 0,
+            emotion: '',
+          }))
+        );
+      }
+    };
+    fetchData();
+  }, []);
+
+  const [stats, setStats] = useState({ totalSessions: 0, averageScore: 0 });
+
+  useEffect(() => {
+    if (historyData.length === 0) return;
+    const totalSessions = historyData.length;
+    const avg =
+      historyData.reduce((sum, h) => sum + h.totalScore, 0) /
+      (historyData.length || 1);
+    setStats({ totalSessions, averageScore: Math.round(avg) });
+  }, [historyData]);
 
   const getEmotionEmoji = (emotion) => {
     const emojiMap = {
@@ -86,7 +92,8 @@ export default function HistoryScreen({ navigation }) {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.headerRow}>
-          <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>MemoryTalk</Text>
+          <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>
+MemoryTalk</Text>
         </View>
 
         <Text style={styles.title}>学習履歴</Text>
@@ -142,12 +149,12 @@ export default function HistoryScreen({ navigation }) {
                   <Text style={styles.date}>{item.date}</Text>
                   <Text style={styles.exprCount}>{item.expressions.length}個の表現を学習</Text>
                 </View>
-                <View style={[styles.scoreBadge, { backgroundColor: scoreStyle.backgroundColor }]}> 
+                <View style={[styles.scoreBadge, { backgroundColor: scoreStyle.backgroundColor }]}>
                   <Text style={{ color: scoreStyle.color, fontWeight: 'bold' }}>{item.totalScore}%</Text>
                 </View>
               </View>
 
-              <View style={styles.expressions}> 
+              <View style={styles.expressions}>
                 {item.expressions.slice(0,2).map((exp, index) => {
                   const expStyle = getScoreStyle(exp.score);
                   return (
@@ -170,7 +177,7 @@ export default function HistoryScreen({ navigation }) {
               <View style={styles.actionRow}>
                 <TouchableOpacity
                   style={[styles.actionButton, styles.detailButton, styles.singleButton]}
-                  onPress={() => navigation.navigate('Detail', { item: { image: item.photo, text: item.expressions[0]?.corrected || '' } })}
+                  onPress={() => navigation.navigate('Detail', { historyId: item.id })}
                 >
                   <Text style={styles.actionText}>詳細を見る</Text>
                 </TouchableOpacity>

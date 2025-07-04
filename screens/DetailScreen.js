@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Image,
   Platform,
@@ -9,72 +9,65 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { supabase } from '../lib/supabase';
 
-export default function DetailScreen() {
+export default function DetailScreen({ route }) {
   const [activeTab, setActiveTab] = useState('expressions');
   const [showTranslation, setShowTranslation] = useState({});
-
-  const [sessionData] = useState({
-    id: 1,
-    date: '2025-06-26',
-    photo:
-      'https://via.placeholder.com/400x300/4ade80/ffffff?text=Beautiful+Memory',
-    originalExpressions: [
-      {
-        id: 1,
-        original: 'I was so happy',
-        corrected: 'I felt incredibly happy',
-        translation: 'とても幸せでした',
-        aiAdvice:
-          'より感情的なニュアンスを表現するために "felt incredibly" を使うとより自然になります。',
-        score: 85,
-        grammarPoints: ['感情表現の強調', 'より自然な語順'],
-        alternatives: [
-          'I was absolutely delighted',
-          'I was overjoyed',
-          'I felt tremendously happy',
-        ],
-      },
-      {
-        id: 2,
-        original: 'This moment is great',
-        corrected: 'This moment was amazing',
-        translation: 'この瞬間は最高でした',
-        aiAdvice:
-          '過去の出来事なので過去形を使い、"great"より"amazing"の方が感動的です。',
-        score: 90,
-        grammarPoints: ['時制の統一', '語彙の豊富さ'],
-        alternatives: [
-          'This moment was wonderful',
-          'This was an incredible moment',
-          'What an amazing moment this was',
-        ],
-      },
-      {
-        id: 3,
-        original: 'I remember this day good',
-        corrected: 'I remember this day fondly',
-        translation: 'この日をよく覚えています',
-        aiAdvice:
-          '"good"は副詞として使う場合"well"になりますが、"fondly"がより適切で感情的です。',
-        score: 75,
-        grammarPoints: ['副詞の使い方', '感情表現'],
-        alternatives: [
-          'I have fond memories of this day',
-          'This day holds special memories',
-          'I cherish this day',
-        ],
-      },
-    ],
+  const [sessionData, setSessionData] = useState({
+    id: null,
+    date: '',
+    photo: '',
+    originalExpressions: [],
     sessionStats: {
-      totalExpressions: 3,
-      averageScore: 83,
-      timeSpent: '12分',
-      completedAt: '14:30',
+      totalExpressions: 0,
+      averageScore: 0,
+      timeSpent: '',
+      completedAt: '',
     },
-    emotion: 'joy',
-    tags: ['家族', '休日', '公園'],
+    emotion: '',
+    tags: [],
   });
+
+  useEffect(() => {
+    const load = async () => {
+      const id = route?.params?.historyId;
+      if (!id) return;
+      const { data, error } = await supabase
+        .from('learning_histories')
+        .select('*, image:images(image_url)')
+        .eq('id', id)
+        .single();
+      if (!error && data) {
+        setSessionData({
+          id: data.id,
+          date: new Date(data.learned_at).toLocaleDateString('ja-JP'),
+          photo: data.image?.image_url,
+          originalExpressions: [
+            {
+              id: data.id,
+              original: data.input_text,
+              corrected: data.feedback_text,
+              translation: '',
+              aiAdvice: data.advice_text,
+              score: 0,
+              grammarPoints: [],
+              alternatives: [],
+            },
+          ],
+          sessionStats: {
+            totalExpressions: 1,
+            averageScore: 0,
+            timeSpent: '',
+            completedAt: '',
+          },
+          emotion: '',
+          tags: [],
+        });
+      }
+    };
+    load();
+  }, [route?.params?.historyId]);
 
   const toggleTranslation = (id) => {
     setShowTranslation((prev) => ({
@@ -227,13 +220,20 @@ export default function DetailScreen() {
                 <View style={styles.altBox}>
                   <Text style={styles.altLabel}>他の表現方法</Text>
                   {exp.alternatives.map((alt, i) => (
-                    <Text key={i} style={styles.altText}>“{alt}”
-                    </Text>
+                    <Text key={i} style={styles.altText}>“{alt}”</Text>
                   ))}
                 </View>
 
                 <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.actionButton}>
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={async () => {
+                      if (!sessionData.id) return;
+                      await supabase
+                        .from('reviews')
+                        .insert({ learning_history_id: sessionData.id });
+                    }}
+                  >
                     <Text style={styles.actionButtonText}>復習に追加</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.actionButton, styles.actionButtonGreen]}>

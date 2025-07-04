@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import * as MediaLibrary from 'expo-media-library';
 import { getEnglishFeedback } from '../services/gemini';
+import { supabase } from '../lib/supabase';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -23,6 +24,9 @@ export default function LearningScreen() {
   };
 
   const [assets, setAssets] = useState([]);
+  const [supabaseImages, setSupabaseImages] = useState([]);
+  const [currentImageId, setCurrentImageId] = useState(null);
+  const [user, setUser] = useState(null);
   const [image, setImage] = useState(null);
   const [imageDate, setImageDate] = useState('');
   const [input, setInput] = useState('');
@@ -40,25 +44,45 @@ export default function LearningScreen() {
 
   useEffect(() => {
     (async () => {
+      const {
+        data: { user: currentUser },
+      } = await supabase.auth.getUser();
+      setUser(currentUser);
+
+      // fetch photos from device as fallback
       const { status } = await MediaLibrary.requestPermissionsAsync();
+      let deviceAssets = [];
       if (status === 'granted') {
-        const result = await MediaLibrary.getAssetsAsync({
+        const res = await MediaLibrary.getAssetsAsync({
           mediaType: 'photo',
           first: 1000,
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
-        if (result.assets.length > 0) {
-          setAssets(result.assets);
-          const initial = result.assets[Math.floor(Math.random() * result.assets.length)];
-          const info = await MediaLibrary.getAssetInfoAsync(initial.id);
-          const uri = info.localUri || initial.uri;
-          setImage(uri);
-          setImageDate(new Date(initial.creationTime).toLocaleDateString('ja-JP'));
-        } else {
-          const url = getRandomPhotoUrl();
-          setImage(url);
-          setImageDate(new Date().toLocaleDateString('ja-JP'));
+        deviceAssets = res.assets;
+        setAssets(res.assets);
+      }
+
+      if (currentUser) {
+        const { data: imgs } = await supabase
+          .from('images')
+          .select('id, image_url, created_at')
+          .eq('user_id', currentUser.id);
+        setSupabaseImages(imgs || []);
+        if (imgs && imgs.length > 0) {
+          const pick = imgs[Math.floor(Math.random() * imgs.length)];
+          setImage(pick.image_url);
+          setCurrentImageId(pick.id);
+          setImageDate(new Date(pick.created_at).toLocaleDateString('ja-JP'));
+          return;
         }
+      }
+
+      if (deviceAssets && deviceAssets.length > 0) {
+        const initial = deviceAssets[Math.floor(Math.random() * deviceAssets.length)];
+        const info = await MediaLibrary.getAssetInfoAsync(initial.id);
+        const uri = info.localUri || initial.uri;
+        setImage(uri);
+        setImageDate(new Date(initial.creationTime).toLocaleDateString('ja-JP'));
       } else {
         const url = getRandomPhotoUrl();
         setImage(url);
@@ -81,7 +105,7 @@ export default function LearningScreen() {
     if (input.trim().length < MIN_INPUT_LENGTH) return;
 
     const result = await getEnglishFeedback(input);
-    
+
     if (!result.message) {
       setIsCorrect(false);
       setFeedback({
@@ -92,6 +116,16 @@ export default function LearningScreen() {
     } else {
       setIsCorrect(true);
       setFeedback({ ...result });
+    }
+
+    if (user && currentImageId) {
+      await supabase.from('learning_histories').insert({
+        user_id: user.id,
+        image_id: currentImageId,
+        input_text: input,
+        feedback_text: result.message || '',
+        advice_text: result.suggestion || '',
+      });
     }
     setStep(3);
   };
@@ -115,7 +149,12 @@ export default function LearningScreen() {
   };
 
   const getNextPhoto = () => {
-    if (assets.length > 0) {
+    if (supabaseImages.length > 0) {
+      const pick = supabaseImages[Math.floor(Math.random() * supabaseImages.length)];
+      setCurrentImageId(pick.id);
+      flipToNextUrl(pick.image_url);
+      setImageDate(new Date(pick.created_at).toLocaleDateString('ja-JP'));
+    } else if (assets.length > 0) {
       const asset = assets[Math.floor(Math.random() * assets.length)];
       flipToNextAsset(asset);
     } else {
@@ -128,9 +167,9 @@ export default function LearningScreen() {
     setStep(1);
     setIsCorrect(null);
     setShowHint(false);
-    setSessionProgress((prev) => (
+    setSessionProgress((prev) =>
       prev.current < prev.total ? { ...prev, current: prev.current + 1 } : prev
-    ));
+    );
   };
 
   const progressPercentage = (sessionProgress.current / sessionProgress.total) * 100;
@@ -209,7 +248,7 @@ export default function LearningScreen() {
               {/*
               {showHint && (
                 <View style={styles.hintBox}>
-                  <Text style={styles.hintText}>例: "I felt so happy when..." / "This moment was..." / "I remember feeling..."</Text>
+                  <Text style={styles.hintText}>例: \"I felt so happy when...\" / \"This moment was...\" / \"I remember feeling...\"</Text>
                 </View>
               )}
               */}

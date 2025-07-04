@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -9,6 +9,7 @@ import {
   Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { supabase } from '../lib/supabase';
 
 export default function HomeScreen({ navigation }) {
   const [userStats] = useState({
@@ -20,26 +21,38 @@ export default function HomeScreen({ navigation }) {
     xp: 2450,
   });
 
-  const [recentPhotos] = useState([
-    {
-      id: 1,
-      uri: 'https://via.placeholder.com/150x100/4ade80/ffffff?text=Photo1',
-      date: '2025-06-26',
-      expressions: 3,
-    },
-    {
-      id: 2,
-      uri: 'https://via.placeholder.com/150x100/60a5fa/ffffff?text=Photo2',
-      date: '2025-06-25',
-      expressions: 2,
-    },
-    {
-      id: 3,
-      uri: 'https://via.placeholder.com/150x100/f472b6/ffffff?text=Photo3',
-      date: '2025-06-24',
-      expressions: 4,
-    },
-  ]);
+  const [recentPhotos, setRecentPhotos] = useState([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: imgs } = await supabase
+        .from('images')
+        .select('id, image_url, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      const { data: histories } = await supabase
+        .from('learning_histories')
+        .select('image_id')
+        .eq('user_id', user.id);
+
+      const countMap = {};
+      (histories || []).forEach((h) => {
+        countMap[h.image_id] = (countMap[h.image_id] || 0) + 1;
+      });
+
+      setRecentPhotos(
+        (imgs || []).map((img) => ({
+          id: img.id,
+          uri: img.image_url,
+          date: new Date(img.created_at).toLocaleDateString('ja-JP'),
+          expressions: countMap[img.id] || 0,
+        }))
+      );
+    };
+    fetchData();
+  }, []);
 
   const progressPercentage =
     (userStats.completedThisWeek / userStats.weeklyGoal) * 100;
