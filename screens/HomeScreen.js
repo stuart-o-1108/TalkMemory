@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Modal,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -9,8 +10,13 @@ import {
   Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as SecureStore from 'expo-secure-store';
 import { supabase } from '../lib/supabase';
 import { getDeviceUserId } from '../lib/deviceId';
+
+const WEEKLY_GOAL_KEY = 'weekly_goal';
+const XP_PER_SESSION = 50;
+const XP_PER_LEVEL = 500;
 
 // ローカル日付（YYYY-MM-DD）を返す。toISOString は UTC でずれるため自前で組む。
 const dayKey = (date) => {
@@ -18,6 +24,16 @@ const dayKey = (date) => {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+};
+
+// 月曜始まりの今週の開始日（YYYY-MM-DD）を返す
+const startOfCurrentWeek = () => {
+  const now = new Date();
+  const day = now.getDay(); // 0=日, 1=月, ..., 6=土
+  const daysFromMonday = day === 0 ? 6 : day - 1;
+  const monday = new Date(now);
+  monday.setDate(monday.getDate() - daysFromMonday);
+  return dayKey(monday);
 };
 
 // 学習した日付の集合から、今日（または昨日）から遡る連続学習日数を数える。
@@ -37,23 +53,32 @@ const computeStreak = (uniqueDayKeys) => {
 };
 
 export default function HomeScreen({ navigation }) {
-  const WEEKLY_GOAL = 5;
+  const [weeklyGoal, setWeeklyGoalState] = useState(5);
+  const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [userStats, setUserStats] = useState({
     streak: 0,
     totalSessions: 0,
-    weeklyGoal: WEEKLY_GOAL,
     completedThisWeek: 0,
     level: 1,
     xp: 0,
   });
-
-  const [userId, setUserId] = useState(null);
   const [recentSessions, setRecentSessions] = useState([]);
+
+  const saveAndSetGoal = async (goal) => {
+    await SecureStore.setItemAsync(WEEKLY_GOAL_KEY, String(goal));
+    setWeeklyGoalState(goal);
+    setGoalModalVisible(false);
+  };
+
+  useEffect(() => {
+    SecureStore.getItemAsync(WEEKLY_GOAL_KEY).then((stored) => {
+      if (stored) setWeeklyGoalState(parseInt(stored, 10));
+    });
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
       const uid = await getDeviceUserId();
-      setUserId(uid);
       const { data: histories } = await supabase
         .from('learning_histories')
         .select('image_id, learned_at, score, image:images(image_url)')
@@ -87,29 +112,29 @@ export default function HomeScreen({ navigation }) {
         .filter((h) => h.learned_at)
         .map((h) => dayKey(new Date(h.learned_at)));
       const uniqueDays = Array.from(new Set(dayKeys));
-      const xp = list.reduce((sum, h) => sum + (h.score || 0), 0);
+
+      // XP: 1セッション（1枚の写真で英文添削完了）= 50 XP
+      const xp = list.length * XP_PER_SESSION;
+
+      // 今週（月〜日）に学習した日数
+      const weekStart = startOfCurrentWeek();
       const todayKey = dayKey(new Date());
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 6);
-      const weekAgoKey = dayKey(weekAgo);
       const completedThisWeek = uniqueDays.filter(
-        (k) => k >= weekAgoKey && k <= todayKey
+        (k) => k >= weekStart && k <= todayKey
       ).length;
 
       setUserStats({
         streak: computeStreak(uniqueDays),
         totalSessions: list.length,
-        weeklyGoal: WEEKLY_GOAL,
         completedThisWeek,
-        level: Math.floor(xp / 500) + 1,
+        level: Math.floor(xp / XP_PER_LEVEL) + 1,
         xp,
       });
     };
     fetchData();
   }, []);
 
-  const progressPercentage =
-    (userStats.completedThisWeek / userStats.weeklyGoal) * 100;
+  const progressPercentage = (userStats.completedThisWeek / weeklyGoal) * 100;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -127,10 +152,7 @@ export default function HomeScreen({ navigation }) {
 
         {/* Stats Cards */}
         <View style={styles.statsRow}>
-          <LinearGradient
-            colors={["#fb923c", "#ef4444"]}
-            style={styles.statCard}
-          >
+          <LinearGradient colors={["#fb923c", "#ef4444"]} style={styles.statCard}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardIcon}>🔥</Text>
               <Text style={styles.cardTitle}>連続学習</Text>
@@ -138,10 +160,7 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.cardValue}>{userStats.streak}日</Text>
           </LinearGradient>
 
-          <LinearGradient
-            colors={["#4ade80", "#10b981"]}
-            style={styles.statCard}
-          >
+          <LinearGradient colors={["#4ade80", "#10b981"]} style={styles.statCard}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardIcon}>⭐</Text>
               <Text style={styles.cardTitle}>レベル</Text>
@@ -155,7 +174,7 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.weeklyHeader}>
             <Text style={styles.weeklyTitle}>今週の目標</Text>
             <Text style={styles.weeklyCount}>
-              {userStats.completedThisWeek}/{userStats.weeklyGoal}回
+              {userStats.completedThisWeek}/{weeklyGoal}日
             </Text>
           </View>
           <View style={styles.progressBarBg}>
@@ -165,7 +184,7 @@ export default function HomeScreen({ navigation }) {
             />
           </View>
           <View style={styles.progressDotsRow}>
-            {Array.from({ length: 7 }).map((_, index) => (
+            {Array.from({ length: weeklyGoal }).map((_, index) => (
               <View
                 key={index}
                 style={[
@@ -229,7 +248,7 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.quickIcon}>📚</Text>
             <Text style={styles.quickText}>学習履歴</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickCard}>
+          <TouchableOpacity style={styles.quickCard} onPress={() => setGoalModalVisible(true)}>
             <Text style={styles.quickIcon}>🎯</Text>
             <Text style={styles.quickText}>目標設定</Text>
           </TouchableOpacity>
@@ -239,6 +258,37 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Weekly Goal Modal */}
+      <Modal
+        visible={goalModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setGoalModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setGoalModalVisible(false)}
+        >
+          <View style={styles.modalBox} onStartShouldSetResponder={() => true}>
+            <Text style={styles.modalTitle}>週間目標を設定</Text>
+            <Text style={styles.modalSub}>毎週月曜日にリセットされます</Text>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+              <TouchableOpacity
+                key={n}
+                style={[styles.goalOption, weeklyGoal === n && styles.goalOptionActive]}
+                onPress={() => saveAndSetGoal(n)}
+              >
+                <Text style={[styles.goalOptionText, weeklyGoal === n && styles.goalOptionTextActive]}>
+                  週 {n} 日
+                </Text>
+                {weeklyGoal === n && <Text style={styles.goalCheck}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -360,19 +410,12 @@ const styles = StyleSheet.create({
   mainButtonIcon: { fontSize: 28, marginBottom: 8, color: '#fff' },
   mainButtonText: { fontSize: 20, color: '#fff', fontWeight: 'bold' },
   mainButtonSub: { fontSize: 14, color: '#e0e7ff', marginTop: 4 },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#334155',
     marginBottom: 12,
   },
-  sectionLink: { color: '#3B82F6', fontWeight: '600' },
   photoScroll: { marginBottom: 24 },
   sessionCard: {
     backgroundColor: '#fff',
@@ -416,4 +459,57 @@ const styles = StyleSheet.create({
   },
   quickIcon: { fontSize: 24, marginBottom: 4 },
   quickText: { fontSize: 14, fontWeight: '600', color: '#334155' },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalBox: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 40,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#334155',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  modalSub: {
+    fontSize: 13,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  goalOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#f1f5f9',
+  },
+  goalOptionActive: {
+    backgroundColor: '#e0e7ff',
+  },
+  goalOptionText: {
+    fontSize: 16,
+    color: '#334155',
+    fontWeight: '500',
+  },
+  goalOptionTextActive: {
+    color: '#6366F1',
+    fontWeight: 'bold',
+  },
+  goalCheck: {
+    fontSize: 16,
+    color: '#6366F1',
+    fontWeight: 'bold',
+  },
 });

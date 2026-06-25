@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-思い出写真 × 英語学習 × マルチモーダル AI 添削アプリ。写真を Gemini に渡してお題を生成し、ユーザーの英文を写真の文脈で添削・スコアリングする。ログイン不要（デバイス ID 方式）。ポートフォリオ用途。
+思い出写真 × 英語学習 × マルチモーダル AI 添削アプリ。カメラロールの写真とユーザーが書いた英文を Gemini に同時送信し、写真の文脈を踏まえた添削・スコアリングを行う。ログイン不要（デバイス ID 方式）。ポートフォリオ用途。
 
 ---
 
@@ -13,11 +13,12 @@
 | フレームワーク | React Native (Expo ~53) |
 | 言語 | JavaScript（TypeScript 未使用） |
 | ナビゲーション | React Navigation v7 (Native Stack) |
-| AI | Gemini 1.5 Pro（マルチモーダル） |
+| AI | Gemini 2.5 Flash / Flash-Lite（マルチモーダル） |
 | データベース | Supabase (PostgreSQL) |
 | デバイス識別 | UUID を expo-secure-store に永続化（ログイン不要） |
 | 画像取得 | expo-media-library |
-| APIキー管理 | `.env` → `app.config.js` の `extra` 経由 |
+| 画像圧縮 | expo-image-manipulator（512px / 60% JPEG） |
+| API キー管理 | `.env` → `app.config.js` の `extra` 経由 |
 
 ---
 
@@ -28,14 +29,14 @@ App.js                      # エントリポイント → AppNavigator
 navigation/AppNavigator.js  # スタック定義（Home / Learning / History / Detail）
 screens/
   HomeScreen.js             # ダッシュボード（Supabase から履歴サマリーを取得）
-  LearningScreen.js         # 学習画面（写真→お題生成→入力→添削→保存）
+  LearningScreen.js         # 学習画面（写真選択 → 英語入力 → 添削 → 保存）
   HistoryScreen.js          # 履歴一覧（Supabase から取得）
   DetailScreen.js           # 履歴詳細（score/grammarPoints/alternatives を表示）
 services/
-  gemini.js                 # generateTopic(imageBase64) / getEnglishFeedback(text, imageBase64)
+  gemini.js                 # getEnglishFeedback(text, signal, imageBase64)
 lib/
   supabase.js               # Supabase クライアント + favorites CRUD
-  deviceId.js               # getDeviceUserId() — SecureStore で UUID を永続化（新規作成予定）
+  deviceId.js               # getDeviceUserId() — SecureStore で UUID を永続化
 ```
 
 ---
@@ -49,7 +50,6 @@ lib/
 getDeviceUserId(): Promise<string>  // SecureStore から取得、なければ生成して保存
 ```
 
-全画面の `supabase.auth.getUser()` をこれに置き換える。  
 将来ログイン機能を追加する場合は `getDeviceUserId()` の戻り値を `auth user.id` に差し替えるだけ。
 
 ---
@@ -57,7 +57,7 @@ getDeviceUserId(): Promise<string>  // SecureStore から取得、なければ�
 ## 画面遷移
 
 ```
-Home ──→ Learning（写真→お題生成→入力→添削→保存）
+Home ──→ Learning（写真選択 → 英語入力 → 添削 → 保存）
 Home ──→ History ──→ Detail
 ```
 
@@ -65,7 +65,18 @@ Home ──→ History ──→ Detail
 
 ## AI 設計（services/gemini.js）
 
-### Gemini への画像送信方法
+### アーキテクチャ（1セッション 1回の API 呼び出し）
+
+写真が選ばれた時点でローカル圧縮（API 呼び出しなし）を行い、ユーザーが英文を送信したタイミングで写真 + テキストを 1回の呼び出しで送信する。
+
+```
+写真選択
+  → ローカル圧縮（expo-image-manipulator 512px/60% JPEG）→ base64 を useRef に保存
+英文送信
+  → getEnglishFeedback(text, signal, imageBase64) → generateContent へ 1回だけ送信
+```
+
+### Gemini への画像送信方法（generateContent）
 
 ```js
 contents: [{
@@ -76,25 +87,31 @@ contents: [{
 }]
 ```
 
+### エンドポイント使い分け
+
+| 条件 | エンドポイント |
+|---|---|
+| 画像あり | `v1beta/models/{model}:generateContent` |
+| テキストのみ | `v1beta/interactions` |
+
 ### 関数インターフェース
 
 ```js
-// 写真から英語学習のお題を生成する（multimodal）
-generateTopic(imageBase64: string, signal: AbortSignal): Promise<string | null>
-
-// ユーザーの英文を添削する（テキストのみ。context にお題テキストを渡すと文脈考慮）
-getEnglishFeedback(text: string, signal: AbortSignal, context?: string): Promise<FeedbackResult>
+// ユーザーの英文を写真の文脈で添削する（マルチモーダル）
+// imageBase64: 圧縮済み JPEG base64。null の場合はテキストのみで添削
+getEnglishFeedback(text: string, signal: AbortSignal, imageBase64?: string | null): Promise<FeedbackResult>
 ```
 
 ### FeedbackResult の型
 
 ```js
 {
+  apiError: boolean,       // true なら UI でリトライボタンを表示
   score: number,           // 0〜100
-  feedback: string,        // 添削コメント（日本語）
+  feedback: string,        // grammarPoints の補足説明（使い分け例など）
   suggestion: string,      // 改善後の英文
-  grammarPoints: string[], // 文法ポイントのラベル
-  alternatives: string[]   // 別の言い回し候補
+  grammarPoints: string[], // 修正箇所（カジュアルな話し言葉で）
+  alternatives: string[]   // ネイティブの別の言い回し候補
 }
 ```
 
@@ -125,8 +142,10 @@ grammarPoints に「完璧です」等のポジティブコメントを入れな
 | ステップ | 動作 |
 |---|---|
 | 1 | `gemini-2.5-flash` でリクエスト |
-| 2 | 429/500 → 即座に `gemini-2.5-flash-lite` へフォールバック（待ち時間なし） |
+| 2 | 429/500/503 → 即座に `gemini-2.5-flash-lite` へフォールバック（待ち時間なし） |
 | 3 | 両方失敗 → `null` 返却 → `apiError: true` → UI でリトライボタン表示 |
+
+> **モデル選定根拠:** Gemini 2.0/1.5 系は Free Tier クォータが 0（リクエスト不可）であることを実測で確認。2.5 系のみで構成。
 
 ### JSON フォールバック
 
@@ -138,17 +157,11 @@ Gemini のレスポンスが壊れた場合は以下で補完する（ユーザ�
 
 パース手順: `raw.match(/\{[\s\S]*\}/)` で JSON 部分を抽出 → `JSON.parse` → 失敗時は catch でデフォルト値。
 
-### Step 3 マルチモーダル実装方針（2026-06-24 実装済み）
+### 開発モックモード
 
-| 機能 | エンドポイント | 画像送信 |
-|---|---|---|
-| `generateTopic(imageBase64, signal)` | `v1beta/models/{model}:generateContent` | JPEG base64（512px リサイズ済み） |
-| `getEnglishFeedback(text, signal, context)` | `v1beta/interactions` | なし（お題テキストをコンテキストとして付加） |
-
-**レスポンス時間対策:**
-- 画像は `expo-image-manipulator` で 512px・60% JPEG に圧縮してからエンコード
-- `getEnglishFeedback` は画像を送らず、お題テキスト（`context`）だけを付加して速度を維持
-- お題生成はバックグラウンドで並行実行（Step1 表示中に完了を待つ）
+`.env` に `MOCK_GEMINI=true` を追加すると Gemini 呼び出しをゼロにできる。  
+本番ビルド（`__DEV__ = false`）では常に本物の API を使う。  
+開発中は `true`、実機動作確認時のみ `false` に切り替える。
 
 ---
 
@@ -167,50 +180,54 @@ reviews        (id, learning_history_id FK, reviewed_at)
 
 ---
 
-## 現在の状態と課題
+## 統計設計（HomeScreen）
 
-### 実装済みで動くもの
-- LearningScreen: 写真表示（MediaLibrary / picsum フォールバック）+ Gemini 添削（テキストのみ）
-- Gemini API 接続（`services/gemini.js`）
-- ナビゲーション全体
+| 指標 | 計算ロジック |
+|---|---|
+| XP | `learning_histories` の行数 × 50（1セッション = 写真1枚の添削完了 = 50 XP） |
+| Level | `Math.floor(XP / 500) + 1`（500 XP ごとにレベルアップ） |
+| streak | 今日（or 昨日）から遡って学習がある連続日数 |
+| 今週の進捗 | 月曜〜日曜を1週とし、学習した日数をカウント（毎週月曜リセット） |
+| 週間目標 | ユーザーが 1〜7 日で設定、expo-secure-store に保存 |
 
-### 未実装・要修正（ステップ順）
+## 実装状況（MVP 時点）
 
-**ステップ 1（起動を安定させる）**
-- `SUPABASE_URL` / `SUPABASE_ANON_KEY` が `lib/supabase.js` にハードコード → `.env` に移す
-- `lib/deviceId.js` が存在しない → 新規作成が必要
-- 全画面の `supabase.auth.getUser()` を `getDeviceUserId()` に置き換える
+### 完了
 
-**ステップ 2（コア体験を繋げる）**
-- LearningScreen の保存処理が `user && currentImageId` 条件でスキップされている
-- HomeScreen の stats（streak / level / XP）がハードコードのダミー
-- DetailScreen の「履歴に戻る」ボタンが `onPress={() => {}}` で未接続
+- マルチモーダル添削（`getEnglishFeedback`）
+- 構造化 JSON 出力 + 二重ガード
+- モデルフォールバック（2.5-flash → 2.5-flash-lite）
+- 画像ローカル圧縮（expo-image-manipulator）
+- AbortController によるリクエストキャンセル
+- 開発モックモード（`MOCK_GEMINI`）
+- デバイス UUID 認証 + Supabase 永続化（`lib/deviceId.js` 実装済み）
+- 学習履歴一覧・詳細表示（DB から実データ取得）
+- HomeScreen ダッシュボード統計（streak / level / XP / 週次進捗）を Supabase 集計から算出
+- 週間目標のユーザー設定（1〜7日、expo-secure-store に保存、毎週月曜リセット）
 
-**ステップ 3（AI の作り込み）**
-- Gemini がテキストのみ → 画像（base64）を渡すマルチモーダル化
-- お題自動生成（`generateTopic`）が未実装
-- 構造化 JSON 出力（score / grammarPoints / alternatives）が未実装
-- learning_histories テーブルに `score` / `grammar_points` / `alternatives` カラムが未追加
-- DetailScreen の「分析」「復習」タブがプレースホルダー
+### 未実装（今後の拡張）
+
+- 写真の文脈に応じた AI によるお題自動生成
+- 復習モード
+- お気に入り機能（favorites テーブルは設計済み）
 
 ---
 
-## 開発フェーズ
+## 開発フェーズ（記録）
 
-### ステップ 1：確実に動かす
-1. `.env` に `SUPABASE_URL` / `SUPABASE_ANON_KEY` を追加し `lib/supabase.js` を修正
-2. `lib/deviceId.js` を新規作成（`getDeviceUserId` — UUID を SecureStore に保存・取得）
-3. 全画面の `supabase.auth.getUser()` を `getDeviceUserId()` に置き換え
-4. `npx expo start` → Expo Go 実機で起動確認
+### ステップ 1：確実に動かす ✅
+- `.env` に Supabase キーを移動
+- `lib/deviceId.js` を新規作成（UUID を SecureStore に保存・取得）
+- 全画面の `supabase.auth.getUser()` を `getDeviceUserId()` に置き換え
 
-### ステップ 2：コア体験を 1 本繋げる
-「写真 → 英語入力 → Gemini 添削 → Supabase 保存 → 履歴で見返せる」をダミーなしで完全動作させる。
+### ステップ 2：コア体験を 1 本繋げる ✅
+「写真 → 英語入力 → Gemini 添削 → Supabase 保存 → 履歴で見返せる」を完全動作させた。
 
-### ステップ 3：AI の作り込み
-- Gemini マルチモーダル化（`generateTopic` + `getEnglishFeedback` に imageBase64 追加）
+### ステップ 3：AI の作り込み ✅
+- Gemini マルチモーダル化（写真 + テキストを 1回の generateContent で送信）
 - 構造化 JSON 出力 + フォールバック実装
-- Supabase テーブルに `score` / `grammar_points` / `alternatives` カラム追加
-- Detail 画面を実データに置き換え
+- スコア/文法ポイント/言い換えを DB に保存・Detail 画面で表示
+- モデルフォールバック設計（Free Tier 制約を実測検証済み）
 
 ---
 
