@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { getEnglishFeedback } from '../services/gemini';
 import { supabase } from '../lib/supabase';
+import { getDeviceUserId } from '../lib/deviceId';
 import {
   Animated,
   KeyboardAvoidingView,
@@ -23,10 +26,39 @@ export default function LearningScreen() {
     return `https://picsum.photos/seed/${id}/400/400`;
   };
 
+  // 画像を 512px にリサイズして base64 化（トークン削減・レスポンス時間短縮）
+  const getCompressedImageBase64 = async (uri) => {
+    try {
+      let localUri = uri;
+      if (uri.startsWith('http')) {
+        const tempPath = FileSystem.cacheDirectory + 'talkmemory_topic_dl.jpg';
+        const { uri: downloaded } = await FileSystem.downloadAsync(uri, tempPath);
+        localUri = downloaded;
+      }
+      const result = await ImageManipulator.manipulateAsync(
+        localUri,
+        [{ resize: { width: 512 } }],
+        { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+      return result.base64 ?? null;
+    } catch (e) {
+      console.warn('[Topic] Compress failed:', e.message);
+      return null;
+    }
+  };
+
+  // 写真をローカルで圧縮して base64 化（API 呼び出しなし・高速）
+  // 結果を imageBase64Ref に保存し、確認ボタン押下時にフィードバックへ渡す
+  const prepareImageBase64 = async (uri) => {
+    imageBase64Ref.current = null;
+    const base64 = await getCompressedImageBase64(uri);
+    imageBase64Ref.current = base64;
+  };
+
   const [assets, setAssets] = useState([]);
   const [supabaseImages, setSupabaseImages] = useState([]);
   const [currentImageId, setCurrentImageId] = useState(null);
-  const [user, setUser] = useState(null);
+  const [userId, setUserId] = useState(null);
   const [image, setImage] = useState(null);
   const [imageDate, setImageDate] = useState('');
   const [input, setInput] = useState('');
@@ -34,58 +66,63 @@ export default function LearningScreen() {
   const [step, setStep] = useState(1);
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHint, setShowHint] = useState(false);
-  const [sessionProgress, setSessionProgress] = useState({ current: 1, total: 5 });
+  const [sessionProgress, setSessionProgress] = useState({ current: 1, total: 3 });
   const [isCorrect, setIsCorrect] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
   const MIN_INPUT_LENGTH = 10;
   const scaleAnim = useState(new Animated.Value(1))[0];
   const flipAnim = useRef(new Animated.Value(0)).current;
+  const abortRef = useRef(null);
+  const imageBase64Ref = useRef(null); // 圧縮済み JPEG base64（確認ボタン押下時に使用）
   const navigation = useNavigation();
 
 
   useEffect(() => {
     (async () => {
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser();
-      setUser(currentUser);
+      try {
+        const currentUserId = await getDeviceUserId();
+        setUserId(currentUserId);
 
-      // fetch photos from device as fallback
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      let deviceAssets = [];
-      if (status === 'granted') {
-        const res = await MediaLibrary.getAssetsAsync({
-          mediaType: 'photo',
-          first: 1000,
-          sortBy: [MediaLibrary.SortBy.creationTime],
-        });
-        deviceAssets = res.assets;
-        setAssets(res.assets);
-      }
-
-      if (currentUser) {
-        const { data: imgs } = await supabase
-          .from('images')
-          .select('id, image_url, created_at')
-          .eq('user_id', currentUser.id);
-        setSupabaseImages(imgs || []);
-        if (imgs && imgs.length > 0) {
-          const pick = imgs[Math.floor(Math.random() * imgs.length)];
-          setImage(pick.image_url);
-          setCurrentImageId(pick.id);
-          setImageDate(new Date(pick.created_at).toLocaleDateString('ja-JP'));
-          return;
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        let deviceAssets = [];
+        if (status === 'granted') {
+          const res = await MediaLibrary.getAssetsAsync({
+            mediaType: 'photo',
+            first: 1000,
+            sortBy: [MediaLibrary.SortBy.creationTime],
+          });
+          deviceAssets = res.assets;
+          setAssets(res.assets);
         }
-      }
 
-      if (deviceAssets && deviceAssets.length > 0) {
-        const initial = deviceAssets[Math.floor(Math.random() * deviceAssets.length)];
-        const info = await MediaLibrary.getAssetInfoAsync(initial.id);
-        const uri = info.localUri || initial.uri;
-        setImage(uri);
-        setImageDate(new Date(initial.creationTime).toLocaleDateString('ja-JP'));
-      } else {
-        const url = getRandomPhotoUrl();
-        setImage(url);
+        // Supabase images はホーム画面の「最近の学習」表示用として取得するだけ。
+        // 学習セッションには使わない（使い回しになり同じ画像が続く原因になるため）。
+        try {
+          const { data: imgs } = await supabase
+            .from('images')
+            .select('id, image_url, created_at')
+            .eq('user_id', currentUserId);
+          setSupabaseImages(imgs || []);
+        } catch (_) {}
+
+        // 優先順位: デバイス写真（毎回ランダム） > picsum フォールバック
+        if (deviceAssets.length > 0) {
+          const initial = deviceAssets[Math.floor(Math.random() * deviceAssets.length)];
+          const info = await MediaLibrary.getAssetInfoAsync(initial.id);
+          const uri = info.localUri || initial.uri;
+          setImage(uri);
+          setCurrentImageId(null);
+          setImageDate(new Date(initial.creationTime).toLocaleDateString('ja-JP'));
+          prepareImageBase64(uri); // ローカル圧縮のみ（API 呼び出しなし）
+        } else {
+          const url = getRandomPhotoUrl();
+          setImage(url);
+          setCurrentImageId(null);
+          setImageDate(new Date().toLocaleDateString('ja-JP'));
+          prepareImageBase64(url);
+        }
+      } catch (_) {
+        setImage(getRandomPhotoUrl());
         setImageDate(new Date().toLocaleDateString('ja-JP'));
       }
     })();
@@ -101,33 +138,72 @@ export default function LearningScreen() {
     }
   }, [step, scaleAnim]);
 
+  // 履歴を保存するための image_id を確保する。
+  // Supabase 由来の写真は currentImageId をそのまま使い、
+  // 端末/picsum の写真は images へ登録してから紐付ける（同一セッションでは再利用）。
+  const ensureImageId = async () => {
+    if (currentImageId) return currentImageId;
+    if (!userId || !image) return null;
+    await supabase.from('users').upsert({ id: userId });
+    const { data, error } = await supabase
+      .from('images')
+      .insert({ user_id: userId, image_url: image })
+      .select('id')
+      .single();
+    if (error || !data) {
+      console.error('[Supabase] image insert failed:', error?.message);
+      return null;
+    }
+    setCurrentImageId(data.id);
+    return data.id;
+  };
+
   const handleNextStep = async () => {
-    if (input.trim().length < MIN_INPUT_LENGTH) return;
+    if (input.trim().length < MIN_INPUT_LENGTH || isLoading) return;
 
-    const result = await getEnglishFeedback(input);
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    if (!result.message) {
-      setIsCorrect(false);
-      setFeedback({
-        message: 'もう少し具体的に表現してみてください！',
-        suggestion: '',
-        encouragement: '',
-      });
-    } else {
-      setIsCorrect(true);
-      setFeedback({ ...result });
+    setIsLoading(true);
+    try {
+      const result = await getEnglishFeedback(input, controller.signal, imageBase64Ref.current);
+      if (controller.signal.aborted) return;
+
+      if (result.apiError) {
+        setIsCorrect(false);
+        setFeedback({ apiError: true });
+      } else {
+        setIsCorrect(result.score >= 75);
+        setFeedback({ ...result });
+      }
+
+      // 写真 → 英語入力 → 添削 → Supabase 保存（全ての写真ソースで保存する）
+      if (!result.apiError && userId) {
+        try {
+          const imageId = await ensureImageId();
+          if (imageId) {
+            const { error } = await supabase.from('learning_histories').insert({
+              user_id: userId,
+              image_id: imageId,
+              input_text: input,
+              feedback_text: result.feedback || '',
+              advice_text: result.suggestion || '',
+              score: result.score || 0,
+              grammar_points: result.grammarPoints || [],
+              alternatives: result.alternatives || [],
+              learned_at: new Date().toISOString(),
+            });
+            if (error) console.error('[Supabase] history insert failed:', error.message);
+          }
+        } catch (e) {
+          console.error('[Supabase] save error:', e.message);
+        }
+      }
+      setStep(3);
+    } finally {
+      setIsLoading(false);
     }
-
-    if (user && currentImageId) {
-      await supabase.from('learning_histories').insert({
-        user_id: user.id,
-        image_id: currentImageId,
-        input_text: input,
-        feedback_text: result.message || '',
-        advice_text: result.suggestion || '',
-      });
-    }
-    setStep(3);
   };
 
   const flipToNextAsset = async (asset) => {
@@ -137,6 +213,7 @@ export default function LearningScreen() {
       setImage(uri);
       setImageDate(new Date(asset.creationTime).toLocaleDateString('ja-JP'));
       flipAnim.setValue(0);
+      prepareImageBase64(uri);
     });
   };
 
@@ -145,16 +222,20 @@ export default function LearningScreen() {
       setImage(url);
       setImageDate(new Date().toLocaleDateString('ja-JP'));
       flipAnim.setValue(0);
+      prepareImageBase64(url);
     });
   };
 
   const getNextPhoto = () => {
-    if (supabaseImages.length > 0) {
-      const pick = supabaseImages[Math.floor(Math.random() * supabaseImages.length)];
-      setCurrentImageId(pick.id);
-      flipToNextUrl(pick.image_url);
-      setImageDate(new Date(pick.created_at).toLocaleDateString('ja-JP'));
-    } else if (assets.length > 0) {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    imageBase64Ref.current = null;
+    setIsLoading(false);
+    setCurrentImageId(null);
+    // デバイス写真優先（毎回ランダムに変わる）、なければ新しい picsum を生成
+    if (assets.length > 0) {
       const asset = assets[Math.floor(Math.random() * assets.length)];
       flipToNextAsset(asset);
     } else {
@@ -263,19 +344,19 @@ export default function LearningScreen() {
                 <Text style={styles.charCount}>文字数: {input.length}</Text>
                 <TouchableOpacity
                   onPress={handleNextStep}
-                  disabled={input.trim().length < MIN_INPUT_LENGTH}
+                  disabled={input.trim().length < MIN_INPUT_LENGTH || isLoading}
                   style={[
                     styles.confirmBtn,
-                    input.trim().length < MIN_INPUT_LENGTH && { backgroundColor: '#e5e7eb' },
+                    (input.trim().length < MIN_INPUT_LENGTH || isLoading) && { backgroundColor: '#e5e7eb' },
                   ]}
                 >
                   <Text
                     style={[
                       styles.confirmBtnText,
-                      input.trim().length < MIN_INPUT_LENGTH && { color: '#9ca3af' },
+                      (input.trim().length < MIN_INPUT_LENGTH || isLoading) && { color: '#9ca3af' },
                     ]}
                   >
-                    確認する ✓
+                    {isLoading ? '採点中... ⏳' : '確認する ✓'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -285,46 +366,99 @@ export default function LearningScreen() {
           {/* Step 3 */}
           {step === 3 && feedback && (
             <View style={styles.feedbackContainer}>
-              <View style={[styles.feedbackBox, isCorrect ? { borderLeftColor: '#4ade80' } : { borderLeftColor: '#fb923c' }]}>
-                <View style={styles.feedbackHeader}>
-                  <Text style={{ fontSize: 24, marginRight: 8 }}>{isCorrect ? '🎉' : '💪'}</Text>
-                  <Text style={styles.feedbackTitle}>{isCorrect ? 'Great Job!' : 'Good Try!'}</Text>
+              {feedback.apiError ? (
+                <View style={[styles.feedbackBox, { borderLeftColor: '#f87171' }]}>
+                  <View style={styles.feedbackHeader}>
+                    <Text style={{ fontSize: 24, marginRight: 8 }}>⚠️</Text>
+                    <Text style={styles.feedbackTitle}>接続に失敗しました</Text>
+                  </View>
+                  <Text style={styles.errorText}>
+                    Gemini への接続に失敗しました。ネットワークを確認して、もう一度「確認する」を押してください。
+                  </Text>
+                  <View style={styles.feedbackButtons}>
+                    <TouchableOpacity style={styles.nextPhotoBtn} onPress={() => setStep(2)}>
+                      <Text style={styles.nextPhotoText}>もう一度試す 🔄</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <View style={{ gap: 12 }}>
-                  <View style={styles.yourExpressionBox}>
-                    <Text style={styles.yourExpressionLabel}>✨ あなたの表現</Text>
-                    <Text style={styles.yourExpressionText}>"{input}"</Text>
-                  </View>
-                  <View style={styles.feedbackMessageBox}>
-                    <Text style={styles.feedbackMessageLabel}>💡 フィードバック</Text>
-                    <Text style={styles.feedbackMessageText}>{feedback.message}</Text>
-                  </View>
-                  {feedback.suggestion ? (
-                    <View style={styles.suggestionBox}>
-                      <Text style={styles.suggestionLabel}>🚀 さらに上達するには</Text>
-                      <Text style={styles.suggestionText}>{feedback.suggestion}</Text>
+              ) : (
+                <View style={[styles.feedbackBox, isCorrect ? { borderLeftColor: '#4ade80' } : { borderLeftColor: '#fb923c' }]}>
+                  <View style={styles.feedbackHeader}>
+                    <Text style={{ fontSize: 24, marginRight: 8 }}>{isCorrect ? '🎉' : '💪'}</Text>
+                    <Text style={styles.feedbackTitle}>{isCorrect ? 'Great Job!' : 'Good Try!'}</Text>
+                    <View style={styles.scoreBadge}>
+                      <Text style={styles.scoreBadgeText}>{feedback.score}点</Text>
                     </View>
-                  ) : null}
                   </View>
-                <Text style={styles.encourage}>{feedback.encouragement}</Text>
-                <View style={styles.feedbackButtons}>
-                  {sessionProgress.current >= sessionProgress.total ? (
-                    <TouchableOpacity
-                      style={styles.nextPhotoBtn}
-                      onPress={() => navigation.navigate('Home')}
-                    >
-                      <Text style={styles.nextPhotoText}>ホームに戻る 🏠</Text>
+                  <View style={{ gap: 12 }}>
+                    {/* ① あなたの表現 */}
+                    <View style={styles.yourExpressionBox}>
+                      <Text style={styles.yourExpressionLabel}>✨ あなたの表現</Text>
+                      <Text style={styles.yourExpressionText}>"{input}"</Text>
+                    </View>
+
+                    {/* ① 修正ポイント＋補足を1枠にまとめる */}
+                    <View style={styles.pointsBox}>
+                      <Text style={styles.pointsLabel}>📝 修正ポイント</Text>
+                      {feedback.grammarPoints && feedback.grammarPoints.length > 0 ? (
+                        feedback.grammarPoints.map((p, i) => (
+                          <View key={i} style={styles.pointRow}>
+                            <Text style={styles.pointBullet}>•</Text>
+                            <Text style={styles.pointText}>{p}</Text>
+                          </View>
+                        ))
+                      ) : (
+                        <Text style={styles.perfectText}>完璧です！直すところはありません 🎉</Text>
+                      )}
+                      {feedback.feedback ? (
+                        <View style={styles.feedbackSubBox}>
+                          <Text style={styles.feedbackSubText}>{feedback.feedback}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    {/* ① 参考表現：ネイティブ言い回し優先、文法修正版を含めて最大2つ */}
+                    {((feedback.alternatives && feedback.alternatives.length > 0) || feedback.suggestion) ? (
+                      <View style={styles.refBox}>
+                        <Text style={styles.refLabel}>🗽 ネイティブならこう言う</Text>
+                        {feedback.alternatives && feedback.alternatives.length > 0 ? (
+                          feedback.alternatives.slice(0, 2).map((alt, i) => (
+                            <View key={i} style={styles.refItem}>
+                              <Text style={styles.refBullet}>›</Text>
+                              <Text style={styles.refText}>"{alt}"</Text>
+                            </View>
+                          ))
+                        ) : feedback.suggestion ? (
+                          <View style={styles.refItem}>
+                            <Text style={styles.refBullet}>›</Text>
+                            <Text style={styles.refText}>"{feedback.suggestion}"</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {/* ② ボタンとコンテンツの間に余白 */}
+                  <View style={{ height: 20 }} />
+                  <View style={styles.feedbackButtons}>
+                    {sessionProgress.current >= sessionProgress.total ? (
+                      <TouchableOpacity
+                        style={styles.nextPhotoBtn}
+                        onPress={() => navigation.navigate('Home')}
+                      >
+                        <Text style={styles.nextPhotoText}>ホームに戻る 🏠</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity style={styles.nextPhotoBtn} onPress={getNextPhoto}>
+                        <Text style={styles.nextPhotoText}>次の写真へ 📸</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity style={styles.reviewBtn} onPress={() => navigation.navigate('History')}>
+                      <Text style={styles.reviewText}>復習する 📚</Text>
                     </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity style={styles.nextPhotoBtn} onPress={getNextPhoto}>
-                      <Text style={styles.nextPhotoText}>次の写真へ 📸</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity style={styles.reviewBtn}>
-                    <Text style={styles.reviewText}>復習する 📚</Text>
-                  </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
+              )}
             </View>
           )}
         </View>
@@ -534,6 +668,48 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 4,
   },
+  feedbackSubBox: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#fed7aa',
+  },
+  feedbackSubText: {
+    color: '#9a3412',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  refBox: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#6ee7b7',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  refLabel: {
+    color: '#065f46',
+    fontWeight: 'bold',
+    marginBottom: 6,
+  },
+  refItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+  },
+  refBullet: {
+    color: '#059669',
+    fontWeight: 'bold',
+    marginRight: 6,
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  refText: {
+    flex: 1,
+    color: '#064e3b',
+    fontStyle: 'italic',
+    fontSize: 15,
+    lineHeight: 22,
+  },
   feedbackMessageBox: {
     backgroundColor: '#dbeafe',
     borderColor: '#bfdbfe',
@@ -568,6 +744,73 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#334155',
     marginVertical: 16,
+  },
+  scoreBadge: {
+    marginLeft: 'auto',
+    backgroundColor: '#eef2ff',
+    borderRadius: 9999,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  scoreBadgeText: {
+    color: '#4338ca',
+    fontWeight: 'bold',
+  },
+  pointsBox: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fed7aa',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  pointsLabel: {
+    color: '#c2410c',
+    fontWeight: 'bold',
+    marginBottom: 6,
+  },
+  pointRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+  },
+  pointBullet: {
+    color: '#ea580c',
+    fontWeight: 'bold',
+    marginRight: 6,
+    lineHeight: 22,
+  },
+  pointText: {
+    flex: 1,
+    color: '#9a3412',
+    fontWeight: '600',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  perfectText: {
+    color: '#15803d',
+    fontWeight: '600',
+  },
+  altBox: {
+    backgroundColor: '#ecfeff',
+    borderColor: '#a5f3fc',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  altLabel: {
+    color: '#0e7490',
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  altText: {
+    color: '#155e75',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  errorText: {
+    color: '#b91c1c',
+    marginTop: 4,
+    lineHeight: 20,
   },
   feedbackButtons: {
     flexDirection: 'row',

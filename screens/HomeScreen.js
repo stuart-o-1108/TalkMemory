@@ -9,77 +9,104 @@ import {
   Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import {
-  supabase,
-  getFavorites,
-  addFavorite,
-  removeFavorite,
-} from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import { getDeviceUserId } from '../lib/deviceId';
+
+// ローカル日付（YYYY-MM-DD）を返す。toISOString は UTC でずれるため自前で組む。
+const dayKey = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+// 学習した日付の集合から、今日（または昨日）から遡る連続学習日数を数える。
+const computeStreak = (uniqueDayKeys) => {
+  const set = new Set(uniqueDayKeys);
+  const cursor = new Date();
+  if (!set.has(dayKey(cursor))) {
+    cursor.setDate(cursor.getDate() - 1);
+    if (!set.has(dayKey(cursor))) return 0;
+  }
+  let streak = 0;
+  while (set.has(dayKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+};
 
 export default function HomeScreen({ navigation }) {
-  const [userStats] = useState({
-    streak: 7,
-    totalSessions: 45,
-    weeklyGoal: 5,
-    completedThisWeek: 3,
-    level: 12,
-    xp: 2450,
+  const WEEKLY_GOAL = 5;
+  const [userStats, setUserStats] = useState({
+    streak: 0,
+    totalSessions: 0,
+    weeklyGoal: WEEKLY_GOAL,
+    completedThisWeek: 0,
+    level: 1,
+    xp: 0,
   });
 
-  const [recentPhotos, setRecentPhotos] = useState([]);
-  const [favoriteIds, setFavoriteIds] = useState([]);
+  const [userId, setUserId] = useState(null);
+  const [recentSessions, setRecentSessions] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-       const [{ data: imgs }, { data: histories }, favs] = await Promise.all([
-        supabase
-          .from('images')
-          .select('id, image_url, created_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false }),
-        supabase.from('learning_histories').select('image_id').eq('user_id', user.id),
-        getFavorites(),
-      ]);
+      const uid = await getDeviceUserId();
+      setUserId(uid);
+      const { data: histories } = await supabase
+        .from('learning_histories')
+        .select('image_id, learned_at, score, image:images(image_url)')
+        .eq('user_id', uid)
+        .order('learned_at', { ascending: false });
 
-      const favSet = new Set((favs || []).map((f) => f.image_id));
-      setFavoriteIds(Array.from(favSet));
-      const countMap = {};
+      // 学習日ごとにまとめてセッションカードを作成
+      const sessionMap = {};
       (histories || []).forEach((h) => {
-        countMap[h.image_id] = (countMap[h.image_id] || 0) + 1;
+        if (!h.learned_at) return;
+        const dk = dayKey(new Date(h.learned_at));
+        if (!sessionMap[dk]) {
+          sessionMap[dk] = {
+            date: dk,
+            displayDate: new Date(h.learned_at).toLocaleDateString('ja-JP'),
+            count: 0,
+            photos: [],
+          };
+        }
+        sessionMap[dk].count++;
+        if (sessionMap[dk].photos.length < 3 && h.image?.image_url) {
+          sessionMap[dk].photos.push(h.image.image_url);
+        }
       });
-
-      setRecentPhotos(
-        (imgs || []).map((img) => ({
-          id: img.id,
-          uri: img.image_url,
-          date: new Date(img.created_at).toLocaleDateString('ja-JP'),
-          expressions: countMap[img.id] || 0,
-          isFavorite: favSet.has(img.id),
-        }))
+      setRecentSessions(
+        Object.values(sessionMap).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10)
       );
+
+      const list = histories || [];
+      const dayKeys = list
+        .filter((h) => h.learned_at)
+        .map((h) => dayKey(new Date(h.learned_at)));
+      const uniqueDays = Array.from(new Set(dayKeys));
+      const xp = list.reduce((sum, h) => sum + (h.score || 0), 0);
+      const todayKey = dayKey(new Date());
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 6);
+      const weekAgoKey = dayKey(weekAgo);
+      const completedThisWeek = uniqueDays.filter(
+        (k) => k >= weekAgoKey && k <= todayKey
+      ).length;
+
+      setUserStats({
+        streak: computeStreak(uniqueDays),
+        totalSessions: list.length,
+        weeklyGoal: WEEKLY_GOAL,
+        completedThisWeek,
+        level: Math.floor(xp / 500) + 1,
+        xp,
+      });
     };
     fetchData();
   }, []);
-
-    const toggleFavorite = async (imageId, isFav) => {
-    if (isFav) {
-      await removeFavorite(imageId);
-    } else {
-      await addFavorite(imageId);
-    }
-    setFavoriteIds((prev) =>
-      isFav ? prev.filter((id) => id !== imageId) : [...prev, imageId]
-    );
-    setRecentPhotos((prev) =>
-      prev.map((p) =>
-        p.id === imageId ? { ...p, isFavorite: !isFav } : p
-      )
-    );
-  };
 
   const progressPercentage =
     (userStats.completedThisWeek / userStats.weeklyGoal) * 100;
@@ -169,28 +196,26 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.mainButtonSub}>思い出を英語で表現してみよう</Text>
         </TouchableOpacity>
 
-        {/* Recent Learning */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>最近の学習</Text>
-          <TouchableOpacity>
-            <Text style={styles.sectionLink}>すべて見る</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.sectionTitle}>最近の学習</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoScroll}>
-          {recentPhotos.map((photo) => (
-            <View key={photo.id} style={styles.photoCard}>
-              <TouchableOpacity
-                style={styles.favoriteButton}
-                onPress={() => toggleFavorite(photo.id, photo.isFavorite)}
-              >
-                <Text style={styles.favoriteIcon}>
-                  {photo.isFavorite ? '⭐' : '☆'}
-                </Text>
-              </TouchableOpacity>
-              <Image source={{ uri: photo.uri }} style={styles.photoImage} />
-              <Text style={styles.photoDate}>{photo.date}</Text>
-              <Text style={styles.photoExp}>{photo.expressions}個の表現</Text>
-            </View>
+          {recentSessions.map((session) => (
+            <TouchableOpacity
+              key={session.date}
+              style={styles.sessionCard}
+              onPress={() => navigation.navigate('History', { filterDate: session.date })}
+            >
+              <View style={styles.sessionThumbRow}>
+                {session.photos.length === 0 ? (
+                  <View style={[styles.sessionThumb, { backgroundColor: '#e2e8f0' }]} />
+                ) : (
+                  session.photos.map((uri, i) => (
+                    <Image key={i} source={{ uri }} style={styles.sessionThumb} />
+                  ))
+                )}
+              </View>
+              <Text style={styles.sessionDate}>{session.displayDate}</Text>
+              <Text style={styles.sessionCount}>{session.count}個の表現</Text>
+            </TouchableOpacity>
           ))}
         </ScrollView>
 
@@ -349,33 +374,30 @@ const styles = StyleSheet.create({
   },
   sectionLink: { color: '#3B82F6', fontWeight: '600' },
   photoScroll: { marginBottom: 24 },
-  photoCard: {
+  sessionCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 8,
     marginRight: 12,
-    width: 120,
-    position: 'relative',
+    width: 150,
     shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  photoImage: {
-    width: '100%',
-    height: 80,
-    borderRadius: 8,
+  sessionThumbRow: {
+    flexDirection: 'row',
+    gap: 2,
     marginBottom: 6,
   },
-  photoDate: { fontSize: 12, color: '#64748B', marginBottom: 2 },
-  photoExp: { fontSize: 12, color: '#2563EB', fontWeight: '600' },
-  favoriteButton: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    zIndex: 1,
+  sessionThumb: {
+    flex: 1,
+    height: 72,
+    borderRadius: 6,
   },
-  favoriteIcon: { fontSize: 18 },  
+  sessionDate: { fontSize: 11, color: '#64748B', marginBottom: 2 },
+  sessionCount: { fontSize: 12, color: '#2563EB', fontWeight: '600' },
   quickRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

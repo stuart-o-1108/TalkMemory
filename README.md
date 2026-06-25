@@ -1,347 +1,177 @@
-## 📱 アプリ概要
+# TalkMemory
 
-### タイトル案（例）
+**思い出写真 × 英語 × マルチモーダル AI 添削**
 
-**「MemoryTalk（メモリートーク）」**
-**思い出 × 英語 × AI エージェント添削＆共感**
-
-### コンセプト
-
-> **スマホの思い出写真を使って、自分の感情を英語で表現。AI が添削し、気持ちまで推測してサポートしてくれる共感型英語学習アプリ。**
-
-### 体験イメージ（1 画面完結 UI）
-
-- 上部にユーザー選択の写真
-- 写真の下に：「このときの気持ちを英語で伝えてみよう！」
-- 入力欄（テキスト）
-- 「確認」ボタン
-
-  - AI が：
-
-    - ✅ 添削コメント（良い点＋言い換え例）
-
-- 表現すべてをその写真と紐づけて保存
-
-### ステップ 2：GPT 連携
+スマホの写真を AI が読み取り、その状況に合った英語表現のお題を自動生成。ユーザーが英文を書くと、写真の文脈を踏まえて AI が添削・スコアリング・言い換えを返す英語学習アプリ。
 
 ---
 
-## 🧩 実装したい最低限の機能（MVP）
+## コンセプト
 
-| 機能                        | 説明                                     | 備考                    |
-| --------------------------- | ---------------------------------------- | ----------------------- |
-| 1. 写真選択・表示           | カメラロールから 1 枚                    | `expo-image-picker`使用 |
-| 2. 感情入力欄               | 英語で自由に表現                         | TextInput               |
-| 3. GPT 添削・アドバイス表示 | 「すごくいい！でも〜の方が自然だよ」など | 英語コーチエージェント  |
-| 4. データ保存               | 写真＋英語表現（複数）＋日時             | Supabase で保存         |
-| 5. 保存履歴の表示           | 過去の学習内容を振り返り可能             | 任意／シンプルで OK     |
+> カメラロールの写真を開くと、AI がその場面を読み取って「この瞬間を英語で表現してみよう」というお題を生成。ユーザーが英文を書くと、写真の文脈に合わせた添削と点数が返ってくる。
 
----
+### 技術的な見どころ（ポートフォリオ観点）
 
-## 🔧 技術仕様
-
-| 分類           | 使用技術・ツール                                             |
-| -------------- | ------------------------------------------------------------ |
-| フロント       | React Native（Expo）＋ TypeScript                            |
-| UI ライブラリ  | Expo components / カスタム                                   |
-| 画像取得       | `expo-image-picker`                                          |
-| 英語添削・推論 | OpenAI GPT-4o API                                            |
-| 状態管理       | React Hooks（`useState`, `useEffect`）                       |
-| データ保存     | Supabase（PostgreSQL + Storage）                             |
-| API キー管理   | `.env`で管理（後に Cloud Function 移行可）                   |
-| AI 連携関数    | `services/gemini.js`に集約                                   |
-| バージョン管理 | Git + GitHub                                                 |
-| テスト         | 必須ではないがロジック部分のみ簡易テスト可能（`vitest`など） |
+| ポイント | 実装内容 |
+|---|---|
+| マルチモーダル LLM | 写真（base64）とテキストを Gemini に同時送信し、画像理解ベースの添削を実現 |
+| 構造化出力 | スコア・文法ポイント・言い換え候補を JSON で安定取得、フォールバック設計あり |
+| 認証なし運用 | デバイス ID（UUID）を user_id に使い、ログイン不要で Supabase を活用 |
 
 ---
 
-## 🛠️ 全体の開発ステップ（段階ごとに整理）
+## 技術スタック
+
+| 分類 | 技術 |
+|---|---|
+| フレームワーク | React Native (Expo ~53) |
+| 言語 | JavaScript |
+| ナビゲーション | React Navigation v7 (Native Stack) |
+| AI | Gemini 1.5 Pro（マルチモーダル） |
+| データベース | Supabase (PostgreSQL) |
+| デバイス識別 | UUID を expo-secure-store に永続化 |
+| 画像取得 | expo-media-library |
+| APIキー管理 | `.env` → `app.config.js` の `extra` 経由 |
 
 ---
 
-### 🔰 ステップ 0：開発環境の準備（所要時間：1〜2 時間）
+## 画面構成
 
-| 作業                            | 説明                             |
-| ------------------------------- | -------------------------------- |
-| ✅ Expo CLI のインストール      | `npm install -g expo-cli`        |
-| ✅ 新規プロジェクト作成         | `npx create-expo-app MemoryTalk` |
-| ✅ GitHub にリポジトリ作成      | バージョン管理と CI 用途         |
-| ✅ .env ファイルで API キー管理 | GPT や Supabase 用のキーを保存   |
-
----
-
-### 🖼️ ステップ 1：基本 UI の構築（3〜4 時間）
-
-| 作業                  | 内容                                | スマホ対応            |
-| --------------------- | ----------------------------------- | --------------------- |
-| ✅ 画像選択 UI        | expo-image-picker で写真 1 枚を取得 | ✅ Expo Go で確認可能 |
-| ✅ 英語入力欄         | TextInput ＋確認ボタン設置          | ✅ スマホで操作可能   |
-| ✅ アドバイス表示領域 | 添削コメント・言い換えを表示        | ✅ スマホで確認可能   |
-
----
-
-### 🤖 ステップ 2：GPT 連携（4〜5 時間）
-
-| 作業                      | 内容                                     | スマホ対応                                |
-| ------------------------- | ---------------------------------------- | ----------------------------------------- |
-| ✅ GPT API との接続       | fetch()や axios で OpenAI/Gemini に POST | ❌ スマホだけでは無理（API キー管理必要） |
-| ✅ 添削＋アドバイスの出力 | Prompt1 で英語コーチ応答生成             | ✅ 表示はスマホで確認可                   |
-
----
-
-### 🗃️ ステップ 3：データ保存（Supabase）（4〜5 時間）
-
-| 作業                      | 内容                           | スマホ対応                |
-| ------------------------- | ------------------------------ | ------------------------- |
-| ✅ Supabase セットアップ  | プロジェクト作成・テーブル設計 | ❌ 管理画面操作＝ PC 必須 |
-| ✅ 写真 URL／入力文の保存 | insert()で保存                 | ✅ スマホで確認は可能     |
-| ✅ 保存データ一覧表示     | 履歴画面の実装                 | ✅ スマホで操作可         |
-
----
-
-### 🎨 ステップ 4：UI 整備・調整（2〜3 時間）
-
-| 作業                          | 内容                     | スマホ対応             |
-| ----------------------------- | ------------------------ | ---------------------- |
-| ✅ レイアウト調整             | 上部写真＋下部対話エリア | ✅ スマホ操作で確認 OK |
-| ✅ 英語キャラ風アドバイス演出 | 吹き出しやアイコン追加   | ✅ スマホで確認 OK     |
-
----
-
-### ✅ ステップ 5：MVP 完成・デモ動作確認（1 時間）
-
-| 作業                                  | 内容 |
-| ------------------------------------- | ---- |
-| ✅ 全画面動作をスマホで通し確認       |      |
-| ✅ 表現の保存／履歴確認など検証       |      |
-| ✅ 機能単位のコード整理・コメント追加 |      |
-
----
-
-## 🤖 AI への指示ルール（Prompt 設計＋開発コーディング規約）
-
-### ✏️ GPT への Prompt 設計
-
-#### ① 英語コーチ（添削＋自然な言い換え）
-
-```text
-あなたはフレンドリーな英語コーチです。
-以下の英文を見て、添削と優しいアドバイスを返してください。
-
-・そのまま使えるなら「完璧！」と返す。
-・直したほうが良い場合は、添削後の文＋理由を説明。
-・できれば自然な言い換え例も1つください。
+```
+Home        ダッシュボード。学習開始ボタンと履歴のサマリー
+  └─ Learning   写真 → AI お題生成 → 英語入力 → AI 添削・スコア表示 → 保存
+  └─ History    学習履歴一覧（Supabase から取得）
+       └─ Detail  履歴詳細。スコア・文法ポイント・言い換えを表示
 ```
 
 ---
 
-### 🛠️ 命名規則（TypeScript 基準）
+## 認証設計（デバイス ID 方式）
 
-| 対象             | 命名規則                                         |
-| ---------------- | ------------------------------------------------ |
-| 変数名           | `camelCase`（例：`userInput`, `adviceText`）     |
-| 関数名           | `camelCase`（例：`handleSubmit`, `fetchAdvice`） |
-| コンポーネント名 | `PascalCase`（例：`PhotoPreview`, `AdviceCard`） |
-| ファイル名       | `kebab-case.tsx`（例：`photo-preview.tsx`）      |
+ログイン画面を設けず、初回起動時に生成した UUID をデバイス識別子として使う。
+
+```
+初回起動
+  → UUID 生成
+  → expo-secure-store に保存
+  → 以降はこの UUID を user_id としてすべての Supabase クエリで使用
+```
+
+将来ログイン機能を追加する場合は、`getDeviceUserId()` の戻り値を `supabase.auth.getUser()` の `user.id` に差し替えるだけで移行できる。
 
 ---
 
-### 💬 コメント・テスト方針
+## AI 設計
 
-- GPT プロンプトには**意図説明コメント必須**
-- 添削ロジックや保存処理など**副作用のある処理には 1 行説明**
-- テストコードは時間があれば`adviceFetch()`のレスポンス整形部分に簡易テストを
+### マルチモーダル入力
 
-####UI 機能要件
+Gemini 1.5 Pro の `generateContent` に画像（base64）とテキストを同時送信する。
 
-### 📱 全画面共通
-
-- ステータスバー下からレイアウトを開始する（iPhone の上部バーより下）
-- タイトル「MemoryTalk」はすべての画面で左上固定（中央寄り NG）
-
-### 🧠 LearningScreen 要件一覧
-
-- ステップ UI 構成を維持：[📸 写真表示] → [✍️ 入力] → [🧠 フィードバック]
-- 画像は aspectRatio: 1 で縦横比を自動調整（見切れ防止）
-- 写真は 1000 枚からランダム抽出し、古いものも含まれるように
-- 入力フィールドはキーボードに被らないように調整
-- タイトルを押すと Home に遷移
-- アニメーション付きの写真反転表示（次の写真へ遷移時）
-- フィードバックは自然な日本語表現（API 出力前提）
-- 設定ボタンは不要
-
-### 📖 HistoryScreen 要件一覧
-
-- ステータスバー下から表示（見切れない）
-- タイトル「MemoryTalk」は左上に固定
-- 写真をメインとしたグリッド表示（将来対応）
-- タップで DetailScreen に遷移
-
-### 🔍 DetailScreen 要件一覧
-
-- タイトル「MemoryTalk」は左上固定
-- 詳細情報のテキストや画像を美しく表示
-  @@ -242,96 +213,86 @@ YES と言われたら、それを表現する英文を添えてください。
-
-### ユースケース一覧 / 画面遷移図（ユーザーがどう使うか）
-
-| ID  | アクター | ユースケース                                       |
-| --- | -------- | -------------------------------------------------- |
-| UC1 | ユーザー | 写真を選び英語表現を投稿し AI フィードバックを得る |
-| UC2 | ユーザー | 保存された学習履歴を閲覧する                       |
-
-```mermaid
-flowchart TD
-    Home --> |"写真で学習"| Learning
-    Learning --> |"保存"| Home
-    Home --> |"復習"| History
-    History --> Detail
+```js
+contents: [{
+  parts: [
+    { inlineData: { mimeType: "image/jpeg", data: imageBase64 } },
+    { text: prompt }
+  ]
+}]
 ```
 
-### 業務要件フロー図
+### 2段階の AI 呼び出し
 
-```mermaid
-flowchart LR
-    Home[ホーム] --> Select[写真選択]
-    Select --> Input[英語入力]
-    Input --> Review[AIフィードバック]
-    Review --> Save[保存]
-    Save --> History[履歴一覧]
-    History --> Detail[詳細表示]
+| フェーズ | 関数 | 内容 |
+|---|---|---|
+| お題生成 | `generateTopic(imageBase64)` | 写真の状況を読み取り、英語表現のお題を日本語で返す |
+| 添削 | `getEnglishFeedback(text, imageBase64)` | 写真の文脈を踏まえて英文を採点・添削する |
+
+### 構造化 JSON 出力仕様
+
+Gemini には以下の JSON のみを返すよう指示する。
+
+```json
+{
+  "score": 82,
+  "feedback": "とても自然な表現です。",
+  "suggestion": "I was really moved by this moment.",
+  "grammarPoints": ["形容詞の語順", "冠詞 a / the の使い分け"],
+  "alternatives": [
+    "This view left me speechless.",
+    "I couldn't help but smile at this scene."
+  ]
+}
 ```
 
-### ワイヤーフレーム（どんな見た目か）
+### スコア定義
 
-#### Home
+| 範囲 | 評価基準 |
+|---|---|
+| 90〜100 | ネイティブに近い自然な表現 |
+| 75〜89 | 意味は伝わるが、より自然な言い回しがある |
+| 60〜74 | 文法ミスがあるが意図は読み取れる |
+| 0〜59 | 大幅な修正が必要。基本構造から見直す |
 
-```
-+----------------------+
-| MemoryTalk           |
-+----------------------+
-| [写真で学習する]      |
-| [復習する]           |
-+----------------------+
-#### Learning
-```
+### JSON フォールバック戦略
 
-+----------------------+
-| < Home | MemoryTalk |
-+----------------------+
-| [Photo preview] |
-| "気持ちを英語で..." |
-| [ TextInput ] |
-| [ 確認する ] |
-+----------------------+
+Gemini のレスポンスが壊れた場合（JSON パース失敗 / フィールド欠損）は以下で補完する。
 
-#### History
-
-```
-+----------------------+
-| MemoryTalk           |
-+----------------------+
-| [Photo Grid]         |
-+----------------------+
-#### Detail
+```js
+{ score: 0, feedback: rawText, suggestion: "", grammarPoints: [], alternatives: [] }
 ```
 
-+----------------------+
-| < Back MemoryTalk |
-+----------------------+
-| [Photo] |
-| [Expression] |
-| [AI Feedback] |
-+----------------------+
+パース手順: `raw.match(/\{[\s\S]*\}/)` で JSON 部分だけ抽出してから `JSON.parse`。
+失敗時は `catch` で上記デフォルト値にフォールバックし、ユーザーにはエラーを出さない。
 
-````
-### データ構造設計 / アーキテクト図（どう実装するか）
+---
 
-| テーブル      | 主なカラム                         |
-|-------------|--------------------------------- |
-| photos      | id, uri, created_at               |
-| expressions | id, photo_id, text, created_at    |
+## DBテーブル設計
 
-```mermaid
-flowchart LR
-    User --> App
-    App --> |"画像取得"| MediaLibrary
-    App --> |"AI 解析"| Gemini
-    App --> |"保存"| Supabase[(DB)]
-````
+```
+users          (id uuid PK, created_at)          ← device UUID を insert
+images         (id, user_id FK, image_url, created_at)
+learning_histories (id, user_id FK, image_id FK,
+                    input_text, feedback_text, advice_text,
+                    score, grammar_points jsonb, alternatives jsonb,
+                    learned_at, is_review, created_at)
+favorites      (id, user_id FK, image_id FK, created_at)  ※ UNIQUE(user_id, image_id)
+reviews        (id, learning_history_id FK, reviewed_at)
+```
 
-### ER 図（エンティティ・リレーションシップ図）
+---
 
-plaintext
-コピーする
-編集する
-┌─────────────┐ ┌─────────────┐
-│ users │ 1 n │ images │
-└─────┬───────┘ └─────┬───────┘
-│ │
-│ │
-▼ ▼
-┌──────────────────────────────┐
-│ learning_histories │
-└─────┬───────────────┬────────┘
-│ │
-│ │
-▼ ▼
-┌─────────────┐ ┌─────────────┐
-│ favorites │ │ reviews │
-└─────────────┘ └─────────────┘
-users（ユーザー）1 : n images（画像）
+## 開発フェーズ
 
-images 1 : n learning_histories（学習履歴）
+### ステップ 1：確実に動かす
 
-learning_histories 1 : 1 reviews（復習フラグ）
+- [ ] `lib/supabase.js` の URL/Key を `.env` に移す
+- [ ] `lib/deviceId.js` を新規作成（UUID 生成・SecureStore 永続化）
+- [ ] 全画面の `supabase.auth.getUser()` を `getDeviceUserId()` に置き換える
+- [ ] `npx expo start` → Expo Go 実機で起動確認
 
-images n : n favorites（お気に入り：ユーザーごと）
+### ステップ 2：コア体験を 1 本、完全に繋げる
 
-## users テーブル
+- [ ] 「写真選択 → 英語入力 → Gemini添削 → 結果表示 → Supabase 保存 → 履歴で見返せる」を完全動作させる
+- [ ] ダミーデータ・ハードコードを撤廃
 
-| カラム名   | 型        | 説明           | 制約          |
-| ---------- | --------- | -------------- | ------------- |
-| id         | uuid      | ユーザー ID    | PK            |
-| name       | text      | ユーザー名     |               |
-| email      | text      | メールアドレス | Unique        |
-| created_at | timestamp | 登録日時       | default=now() |
+### ステップ 3：AI の作り込み
 
-## images テーブル
+- [ ] Gemini をマルチモーダル化（写真 base64 + テキストを同時送信）
+- [ ] お題自動生成（`generateTopic`）を実装
+- [ ] 構造化 JSON 出力（score / grammarPoints / alternatives）を実装
+- [ ] Detail 画面のハードコードを実データに置き換え
+- [ ] フォールバック処理を実装・検証
 
-| カラム名   | 型        | 説明        | 制約          |
-| ---------- | --------- | ----------- | ------------- |
-| id         | uuid      | 画像 ID     | PK            |
-| user_id    | uuid      | ユーザー ID | FK (users)    |
-| image_url  | text      | 画像 URL    |               |
-| created_at | timestamp | 登録日時    | default=now() |
+---
 
-## learning_histories テーブル
+## 環境セットアップ
 
-| カラム名      | 型        | 説明           | 制約          |
-| ------------- | --------- | -------------- | ------------- |
-| id            | uuid      | 履歴 ID        | PK            |
-| user_id       | uuid      | ユーザー ID    | FK (users)    |
-| image_id      | uuid      | 画像 ID        | FK (images)   |
-| input_text    | text      | 入力した表現   |               |
-| feedback_text | text      | 添削内容       |               |
-| advice_text   | text      | フィードバック |               |
-| learned_at    | timestamp | 学習日時       | default=now() |
-| is_review     | boolean   | 復習フラグ     | default=false |
-| created_at    | timestamp | 履歴作成日時   | default=now() |
+```bash
+npm install
+npx expo start
+```
 
-## favorites テーブル
+`.env` に以下を設定
 
-| カラム名                  | 型        | 説明                      | 制約          |
-| ------------------------- | --------- | ------------------------- | ------------- |
-| id                        | uuid      | お気に入り ID             | PK            |
-| user_id                   | uuid      | ユーザー ID               | FK (users)    |
-| image_id                  | uuid      | 画像 ID                   | FK (images)   |
-| created_at                | timestamp | 登録日時                  | default=now() |
-| UNIQUE(user_id, image_id) |           | ユーザーごと画像 1 つまで |               |
-
-## reviews テーブル
-
-| カラム名            | 型        | 説明         | 制約                    |
-| ------------------- | --------- | ------------ | ----------------------- |
-| id                  | uuid      | レビュー ID  | PK                      |
-| learning_history_id | uuid      | 学習履歴 ID  | FK (learning_histories) |
-| reviewed_at         | timestamp | 復習した日時 | default=now()           |
+```
+GEMINI_API_KEY=your_key_here
+SUPABASE_URL=your_url_here
+SUPABASE_ANON_KEY=your_key_here
+```

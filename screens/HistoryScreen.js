@@ -14,8 +14,18 @@ import {
   supabase,
   getFavorites,
 } from '../lib/supabase';
+import { getDeviceUserId } from '../lib/deviceId';
 
-export default function HistoryScreen({ navigation }) {
+const dayKey = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+export default function HistoryScreen({ navigation, route }) {
+  const filterImageId = route?.params?.filterImageId ?? null;
+  const filterDate = route?.params?.filterDate ?? null;
   const [activeTab, setActiveTab] = useState('recent');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -24,19 +34,16 @@ export default function HistoryScreen({ navigation }) {
 
   useEffect(() => {
     const fetchData = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+      const uid = await getDeviceUserId();
       const [{ data, error }, favs] = await Promise.all([
         supabase
           .from('learning_histories')
           .select(
-            'id, image_id, learned_at, input_text, feedback_text, advice_text, image:images(id,image_url)'
+            'id, image_id, learned_at, input_text, feedback_text, advice_text, score, image:images(id,image_url)'
           )
-          .eq('user_id', user.id)
+          .eq('user_id', uid)
           .order('learned_at', { ascending: false }),
-        getFavorites(),
+        getFavorites(uid),
       ]);
       if (!error && data) {
         setFavoriteIds((favs || []).map((f) => f.image_id));
@@ -44,16 +51,17 @@ export default function HistoryScreen({ navigation }) {
           data.map((h) => ({
             id: h.id,
             imageId: h.image_id,
+            dateKey: h.learned_at ? dayKey(new Date(h.learned_at)) : '',
             date: new Date(h.learned_at).toLocaleDateString('ja-JP'),
             photo: h.image?.image_url,
             expressions: [
               {
                 original: h.input_text,
-                corrected: h.feedback_text,
-                score: 0,
+                corrected: h.advice_text,
+                score: h.score || 0,
               },
             ],
-            totalScore: 0,
+            totalScore: h.score || 0,
             emotion: '',
           }))
         );
@@ -100,18 +108,33 @@ export default function HistoryScreen({ navigation }) {
     ) || item.date.includes(searchQuery)
   );
 
-  const filteredHistory = searchFiltered.filter((item) =>
-    activeTab === 'favorites' ? favoriteIds.includes(item.imageId) : true
-  );
+  const filteredHistory = searchFiltered.filter((item) => {
+    if (filterImageId) return item.imageId === filterImageId;
+    if (filterDate) return item.dateKey === filterDate;
+    if (activeTab === 'favorites') return favoriteIds.includes(item.imageId);
+    return true;
+  });
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.headerRow}>
-          <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>MemoryTalk</Text>
+          {filterImageId || filterDate ? (
+            <TouchableOpacity onPress={() => navigation.goBack()}>
+              <Text style={styles.backBtn}>← 戻る</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.logo} onPress={() => navigation.navigate('Home')}>MemoryTalk</Text>
+          )}
         </View>
 
-        <Text style={styles.title}>学習履歴</Text>
+        <Text style={styles.title}>
+          {filterDate
+            ? `${filterDate.replace(/-/g, '/')} の学習`
+            : filterImageId
+            ? 'この写真の学習履歴'
+            : '学習履歴'}
+        </Text>
 
         <TextInput
           style={styles.searchInput}
@@ -222,6 +245,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#0EA5E9',
+  },
+  backBtn: {
+    fontSize: 16,
+    color: '#2563eb',
+    fontWeight: '600',
   },
   title: {
     fontSize: 22,

@@ -11,9 +11,8 @@ import {
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 
-export default function DetailScreen({ route }) {
-  const [activeTab, setActiveTab] = useState('expressions');
-  const [showTranslation, setShowTranslation] = useState({});
+export default function DetailScreen({ route, navigation }) {
+  const [showTranslation] = useState({});
   const [sessionData, setSessionData] = useState({
     id: null,
     date: '',
@@ -47,19 +46,24 @@ export default function DetailScreen({ route }) {
             {
               id: data.id,
               original: data.input_text,
-              corrected: data.feedback_text,
+              corrected: data.advice_text,
               translation: '',
-              aiAdvice: data.advice_text,
-              score: 0,
-              grammarPoints: [],
-              alternatives: [],
+              aiAdvice: data.feedback_text,
+              score: data.score || 0,
+              grammarPoints: data.grammar_points || [],
+              alternatives: data.alternatives || [],
             },
           ],
           sessionStats: {
             totalExpressions: 1,
-            averageScore: 0,
-            timeSpent: '',
-            completedAt: '',
+            averageScore: data.score || 0,
+            timeSpent: '—',
+            completedAt: data.learned_at
+              ? new Date(data.learned_at).toLocaleTimeString('ja-JP', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : '—',
           },
           emotion: '',
           tags: [],
@@ -69,13 +73,6 @@ export default function DetailScreen({ route }) {
     load();
   }, [route?.params?.historyId]);
 
-  const toggleTranslation = (id) => {
-    setShowTranslation((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
-  };
-
   const getScoreColor = (score) => {
     if (score >= 90) return styles.scoreExcellent;
     if (score >= 75) return styles.scoreGood;
@@ -83,23 +80,11 @@ export default function DetailScreen({ route }) {
     return styles.scoreBad;
   };
 
-  const getEmotionEmoji = (emotion) => {
-    const emojiMap = {
-      joy: '😊',
-      excitement: '🤩',
-      contentment: '😌',
-      sadness: '😢',
-      anger: '😠',
-      surprise: '😲',
-    };
-    return emojiMap[emotion] || '😊';
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => {}}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.back}>&larr; 履歴に戻る</Text>
           </TouchableOpacity>
           <View style={styles.headerCenter}>
@@ -108,23 +93,12 @@ export default function DetailScreen({ route }) {
           </View>
         </View>
 
+        {/* ④ 写真はクエリで取得した sessionData.photo を使う（履歴ごとに一致） */}
         <View style={styles.photoBox}>
-          <View style={styles.photoOverlay}>
-            <View style={styles.emotionBox}>
-              <Text style={styles.emotionEmoji}>{getEmotionEmoji(sessionData.emotion)}</Text>
-              <Text style={styles.emotionText}>喜び</Text>
-            </View>
-          </View>
           <Image source={{ uri: sessionData.photo }} style={styles.photo} />
-          <View style={styles.tagRow}>
-            {sessionData.tags.map((tag) => (
-              <Text key={tag} style={styles.tag}>
-                #{tag}
-              </Text>
-            ))}
-          </View>
         </View>
 
+        {/* ⑤ 学習時間・完了時刻を削除し、表現数とスコアのみ */}
         <View style={styles.statsBox}>
           <Text style={styles.statsTitle}>セッション統計</Text>
           <View style={styles.statsRow}>
@@ -134,128 +108,48 @@ export default function DetailScreen({ route }) {
             </View>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: '#16a34a' }]}>{sessionData.sessionStats.averageScore}%</Text>
-              <Text style={styles.statLabel}>平均スコア</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: '#7c3aed' }]}>{sessionData.sessionStats.timeSpent}</Text>
-              <Text style={styles.statLabel}>学習時間</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: '#ea580c' }]}>{sessionData.sessionStats.completedAt}</Text>
-              <Text style={styles.statLabel}>完了時刻</Text>
+              <Text style={styles.statLabel}>スコア</Text>
             </View>
           </View>
         </View>
 
-        <View style={styles.tabsRow}>
-          {[
-            { key: 'expressions', label: '表現一覧' },
-            { key: 'analysis', label: '分析' },
-            { key: 'practice', label: '復習' },
-          ].map((tab) => (
-            <TouchableOpacity
-              key={tab.key}
-              style={[
-                styles.tabButton,
-                activeTab === tab.key && styles.tabButtonActive,
-              ]}
-              onPress={() => setActiveTab(tab.key)}
-            >
-              <Text
-                style={[
-                  styles.tabText,
-                  activeTab === tab.key && styles.tabTextActive,
-                ]}
-              >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {activeTab === 'expressions' && (
-          <View style={styles.expressionsBox}>
-            {sessionData.originalExpressions.map((exp, idx) => (
-              <View key={exp.id} style={styles.expressionCard}>
-                <View style={styles.expressionHeader}>
-                  <View style={styles.expressionIndexBox}>
-                    <Text style={styles.expressionIndex}>{idx + 1}</Text>
-                  </View>
-                  <View style={styles.expressionInfo}>
-                    <Text style={styles.expressionTitle}>表現 {idx + 1}</Text>
-                    <Text style={styles.expressionPoints}>
-                      学習ポイント: {exp.grammarPoints.join(', ')}
-                    </Text>
-                  </View>
-                  <View style={[styles.scoreBox, getScoreColor(exp.score)]}>
-                    <Text style={styles.scoreText}>{exp.score}%</Text>
-                  </View>
-                </View>
-
-                <View style={styles.originalBox}>
-                  <View style={styles.originalHeader}>
-                    <Text style={styles.originalLabel}>あなたの表現</Text>
-                    <TouchableOpacity onPress={() => toggleTranslation(exp.id)}>
-                      <Text style={styles.toggleTrans}>
-                        {showTranslation[exp.id] ? '翻訳を隠す' : '日本語で見る'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.originalText}>“{exp.original}”</Text>
-                  {showTranslation[exp.id] && (
-                    <Text style={styles.translationText}>「{exp.translation}」</Text>
-                  )}
-                </View>
-
-                <View style={styles.correctBox}>
-                  <Text style={styles.correctLabel}>改善版</Text>
-                  <Text style={styles.correctText}>“{exp.corrected}”</Text>
-                </View>
-
-                <View style={styles.adviceBox}>
-                  <Text style={styles.adviceLabel}>AIからのアドバイス</Text>
-                  <Text style={styles.adviceText}>{exp.aiAdvice}</Text>
-                </View>
-
-                <View style={styles.altBox}>
-                  <Text style={styles.altLabel}>他の表現方法</Text>
-                  {exp.alternatives.map((alt, i) => (
-                    <Text key={i} style={styles.altText}>“{alt}”</Text>
-                  ))}
-                </View>
-
-                <View style={styles.actionRow}>
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={async () => {
-                      if (!sessionData.id) return;
-                      await supabase
-                        .from('reviews')
-                        .insert({ learning_history_id: sessionData.id });
-                    }}
-                  >
-                    <Text style={styles.actionButtonText}>復習に追加</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.actionButton, styles.actionButtonGreen]}>
-                    <Text style={styles.actionButtonText}>もう一度練習</Text>
-                  </TouchableOpacity>
+        <View style={styles.expressionsBox}>
+          {sessionData.originalExpressions.map((exp) => (
+            <View key={exp.id} style={styles.expressionCard}>
+              <View style={styles.scoreCenterRow}>
+                <View style={[styles.scoreBox, getScoreColor(exp.score)]}>
+                  <Text style={styles.scoreText}>{exp.score}%</Text>
                 </View>
               </View>
-            ))}
-          </View>
-        )}
 
-        {activeTab === 'analysis' && (
-          <View style={styles.placeholderBox}>
-            <Text style={styles.placeholderText}>分析内容をここに表示</Text>
-          </View>
-        )}
+              <View style={styles.originalBox}>
+                <Text style={styles.originalLabel}>あなたの表現</Text>
+                <Text style={styles.originalText}>”{exp.original}”</Text>
+              </View>
 
-        {activeTab === 'practice' && (
-          <View style={styles.placeholderBox}>
-            <Text style={styles.placeholderText}>復習機能は未実装です</Text>
-          </View>
-        )}
+              {exp.alternatives && exp.alternatives.length > 0 && (
+                <View style={styles.nativeBox}>
+                  <Text style={styles.nativeLabel}>🗽 ネイティブならこう言う</Text>
+                  {exp.alternatives.map((alt, i) => (
+                    <Text key={i} style={styles.nativeText}>”{alt}”</Text>
+                  ))}
+                </View>
+              )}
+
+              {exp.grammarPoints && exp.grammarPoints.length > 0 && (
+                <View style={styles.grammarBox}>
+                  <Text style={styles.grammarLabel}>📝 修正ポイント</Text>
+                  {exp.grammarPoints.map((p, i) => (
+                    <View key={i} style={styles.grammarRow}>
+                      <Text style={styles.grammarBullet}>•</Text>
+                      <Text style={styles.grammarText}>{p}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -375,28 +269,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
   },
-  tabsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    marginBottom: 16,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderRadius: 16,
-  },
-  tabButtonActive: {
-    backgroundColor: '#4338ca',
-  },
-  tabText: {
-    color: '#64748B',
-    fontWeight: 'bold',
-  },
-  tabTextActive: {
-    color: '#fff',
-  },
   expressionsBox: {
     gap: 16,
   },
@@ -404,44 +276,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 16,
+    gap: 10,
   },
-  expressionHeader: {
-    flexDirection: 'row',
+  scoreCenterRow: {
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  expressionIndexBox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#4f46e5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
-  expressionIndex: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  expressionInfo: {
-    flex: 1,
-  },
-  expressionTitle: {
-    fontWeight: 'bold',
-    color: '#334155',
-  },
-  expressionPoints: {
-    fontSize: 12,
-    color: '#64748B',
+    marginBottom: 4,
   },
   scoreBox: {
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    borderRadius: 9999,
+    paddingHorizontal: 20,
+    paddingVertical: 6,
   },
   scoreText: {
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 18,
   },
   scoreExcellent: {
     backgroundColor: '#DCFCE7',
@@ -465,110 +313,65 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#CBD5E1',
     borderRadius: 8,
-    marginBottom: 8,
-  },
-  originalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
   },
   originalLabel: {
     fontSize: 12,
     fontWeight: 'bold',
     color: '#475569',
-  },
-  toggleTrans: {
-    fontSize: 12,
-    color: '#2563EB',
+    marginBottom: 4,
   },
   originalText: {
     color: '#1E293B',
     fontWeight: '500',
   },
-  translationText: {
-    marginTop: 4,
+  nativeBox: {
+    backgroundColor: '#ecfdf5',
+    padding: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#6ee7b7',
+    borderRadius: 8,
+  },
+  nativeLabel: {
     fontSize: 12,
+    fontWeight: 'bold',
+    color: '#065f46',
+    marginBottom: 6,
+  },
+  nativeText: {
+    fontSize: 13,
+    color: '#064e3b',
     fontStyle: 'italic',
-    color: '#475569',
+    marginTop: 4,
+    lineHeight: 20,
   },
-  correctBox: {
-    backgroundColor: '#EFF6FF',
-    padding: 12,
+  grammarBox: {
+    backgroundColor: '#fff7ed',
     borderLeftWidth: 4,
-    borderLeftColor: '#93C5FD',
+    borderLeftColor: '#fb923c',
     borderRadius: 8,
-    marginBottom: 8,
-  },
-  correctLabel: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#1E3A8A',
-    marginBottom: 4,
-  },
-  correctText: {
-    color: '#1E3A8A',
-  },
-  adviceBox: {
-    backgroundColor: '#F5F3FF',
     padding: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#C4B5FD',
-    borderRadius: 8,
-    marginBottom: 8,
   },
-  adviceLabel: {
+  grammarLabel: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#6B21A8',
-    marginBottom: 4,
+    color: '#c2410c',
+    marginBottom: 6,
   },
-  adviceText: {
-    color: '#6B21A8',
-  },
-  altBox: {
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    paddingTop: 8,
-    marginTop: 8,
-  },
-  altLabel: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#475569',
-    marginBottom: 4,
-  },
-  altText: {
-    fontSize: 12,
-    color: '#047857',
-    marginBottom: 2,
-  },
-  actionRow: {
+  grammarRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 12,
-    gap: 8,
+    alignItems: 'flex-start',
+    marginTop: 4,
   },
-  actionButton: {
-    flex: 1,
-    backgroundColor: '#3B82F6',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  actionButtonGreen: {
-    backgroundColor: '#22C55E',
-  },
-  actionButtonText: {
-    color: '#fff',
+  grammarBullet: {
+    color: '#ea580c',
     fontWeight: 'bold',
+    marginRight: 6,
+    lineHeight: 20,
   },
-  placeholderBox: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-  placeholderText: {
-    color: '#64748B',
+  grammarText: {
+    flex: 1,
+    color: '#9a3412',
+    fontSize: 13,
+    lineHeight: 20,
   },
 });

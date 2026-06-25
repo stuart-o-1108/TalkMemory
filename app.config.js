@@ -35,10 +35,21 @@ export default {
           resizeMode: "contain",
           backgroundColor: "#ffffff"
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "思い出の写真を使って英語学習をするために、写真へのアクセスを許可してください。",
+          "savePhotosPermission": "写真の保存を許可してください。",
+          "isAccessMediaLocationEnabled": true
+        }
       ]
     ],
     extra: {
       GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      SUPABASE_URL: process.env.SUPABASE_URL,
+      SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+      MOCK_GEMINI: process.env.MOCK_GEMINI,
     }
   }
 }
